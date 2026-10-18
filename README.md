@@ -1,4 +1,4 @@
-﻿# SE2VR: OpenXR VR for Space Engineers 2
+# SE2VR: OpenXR VR for Space Engineers 2
 
 An experimental plugin that renders Space Engineers 2 in a PC VR headset through OpenXR (SteamVR, Oculus/Meta, WMR,
 Virtual Desktop, and others).
@@ -73,7 +73,7 @@ To play without VR, remove the launch option, or set `"Enabled": false` in `SE2V
 | `ForceWindowedResolution` | `true` | Runs the game in a window sized to one eye, so every rendered pixel reaches the headset. |
 | `LockResolution` | `true` | Ignores display-mode changes from the game's options menu while VR is active. They are still saved for non-VR play. |
 | `RecenterKey` | `Home` | Makes your current head position and heading the new "forward". Accepts names like `Home`, `F8` or `Ctrl+R`. Empty disables it. |
-| `CaptureKey` | `Ctrl+Shift+F9` | Saves the images sent to the headset (both eyes and the UI panel) as PNGs in the `captures` folder. |
+| `CaptureKey` | `Ctrl+Shift+F10` | Saves the images sent to the headset (both eyes and the UI panel) as PNGs in the `captures` folder. |
 | `DisableFsr` | `true` | Uses FXAA instead of FSR while in VR. |
 | `SystemWaitSeconds` | `15` | How long to wait at start-up for the headset to appear. |
 | `VerboseLogging` | `false` | Writes more detail to the log. |
@@ -84,7 +84,7 @@ Settings are read once, at game start.
 
 - **Recenter:** the view recenters automatically when the session starts and when a world loads. Press `Home` (the
   `RecenterKey` setting), or use SteamVR's "Reset seated position", to recenter at any time.
-- **Debug capture:** press `Ctrl+Shift+F9`, or create an empty file named `capture` in the plugin folder, to save
+- **Debug capture:** press `Ctrl+Shift+F10`, or create an empty file named `capture` in the plugin folder, to save
   what the headset receives into `captures\`.
 - **Steering:** the mouse or gamepad still turns the character and aims tools. The headset adds free head movement on
   top. The crosshair stays in the center of the floating HUD panel.

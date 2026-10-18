@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using Keen.VRage.Render12.Core;
 using Keen.VRage.Render12.Core.CommandLists;
@@ -11,12 +12,13 @@ using Vortice.Direct3D12;
 namespace SE2VR.Rendering;
 
 /// <summary>
-/// Saves exactly what is handed to the headset (left eye, right eye, UI panel) as PNG files, for debugging.
+/// Saves exactly what is handed to the headset (left eye, right eye, UI panel) as PNG files, plus a simulated
+/// headset view per eye with the UI panel composited the way the runtime does it. For debugging.
 /// Triggered by the capture hotkey or by creating a file named "capture" next to the plugin.
 /// </summary>
 internal static class FrameCapture
 {
-    private readonly struct Item
+    private readonly struct Pending
     {
         public required string Name { get; init; }
         public required ReadbackBuffer Buffer { get; init; }
@@ -25,13 +27,16 @@ internal static class FrameCapture
         public required int RowPitch { get; init; }
     }
 
-    private static readonly List<Item> _items = new();
+    private static readonly List<Pending> _pending = new();
 
     /// <summary>Set to capture the next rendered VR frame.</summary>
     public static bool Requested { get; set; }
 
     /// <summary>True while the current frame is being captured.</summary>
     public static bool Active { get; private set; }
+
+    /// <summary>Optional label added to the file names (used by the test script to name UI screens).</summary>
+    public static string Label { get; set; } = "";
 
     public static void BeginFrame()
     {
@@ -60,7 +65,7 @@ internal static class FrameCapture
         commandList.ExplicitStateTransition(image.AutoResourceState, ResourceStates.RenderTarget, discardResource: false);
         commandList.ResolveResourceStates();
 
-        _items.Add(new Item
+        _pending.Add(new Pending
         {
             Name = name,
             Buffer = buffer,
@@ -71,18 +76,16 @@ internal static class FrameCapture
     }
 
     /// <summary>After the frame was submitted: wait for the GPU, read the pixels back and write the files in the background.</summary>
-    public static void EndFrame(string directory)
+    public static void EndFrame(string directory, CompositionSnapshot? snapshot)
     {
         Active = false;
-        if (_items.Count == 0)
+        if (_pending.Count == 0)
         {
             return;
         }
         CoreSystems.FrameDispatcher.FlushAllQueuesAndWaitCpu();
-        string folder = Path.Combine(directory, "captures");
-        Directory.CreateDirectory(folder);
-        string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        foreach (Item item in _items)
+        var images = new Dictionary<string, CompositionPreview.Image>();
+        foreach (Pending item in _pending)
         {
             byte[] pixels = new byte[item.Width * item.Height * 4];
             using (ReadbackBuffer.MappedToken mapped = item.Buffer.Map())
@@ -94,53 +97,69 @@ internal static class FrameCapture
                 }
             }
             item.Buffer.Dispose();
-            string path = Path.Combine(folder, $"{stamp}_{item.Name}.png");
-            int width = item.Width, height = item.Height;
-            string name = item.Name;
-            ThreadPool.QueueUserWorkItem(_ => Save(path, width, height, pixels, name));
+            images[item.Name] = new CompositionPreview.Image { Pixels = pixels, Width = item.Width, Height = item.Height };
         }
-        _items.Clear();
+        _pending.Clear();
+
+        string folder = Path.Combine(directory, "captures");
+        Directory.CreateDirectory(folder);
+        string label = string.Concat(Label.Split(Path.GetInvalidFileNameChars()));
+        string prefix = Path.Combine(folder, DateTime.Now.ToString("yyyyMMdd_HHmmss") + (label.Length > 0 ? "_" + label : ""));
+        Label = "";
+        ThreadPool.QueueUserWorkItem(_ => Save(prefix, images, snapshot));
     }
 
-    private static void Save(string path, int width, int height, byte[] pixels, string name)
+    private static void Save(string prefix, Dictionary<string, CompositionPreview.Image> images, CompositionSnapshot? snapshot)
     {
         try
         {
-            PngWriter.Write(path, width, height, pixels, 4);
-            int transparent = 0, opaque = 0, partial = 0, colorWithoutAlpha = 0;
-            byte[] alpha = new byte[width * height];
-            for (int i = 0; i < alpha.Length; i++)
+            foreach ((string name, CompositionPreview.Image image) in images)
             {
-                byte a = pixels[i * 4 + 3];
-                alpha[i] = a;
-                if (a == 0)
-                {
-                    transparent++;
-                    if ((pixels[i * 4] | pixels[i * 4 + 1] | pixels[i * 4 + 2]) > 8)
-                    {
-                        colorWithoutAlpha++;
-                    }
-                }
-                else if (a == 255)
-                {
-                    opaque++;
-                }
-                else
-                {
-                    partial++;
-                }
+                PngWriter.Write($"{prefix}_{name}.png", image.Width, image.Height, image.Pixels, 4);
+                Log.Info($"Captured {prefix}_{name}.png ({image.Width}x{image.Height}, {AlphaStats(image)})");
             }
-            string stats = $"alpha: {100.0 * transparent / alpha.Length:0.#}% zero ({100.0 * colorWithoutAlpha / alpha.Length:0.#}% zero-alpha pixels still have color), " +
-                           $"{100.0 * partial / alpha.Length:0.#}% partial, {100.0 * opaque / alpha.Length:0.#}% opaque";
-            if (name == "ui")
+            if (snapshot == null)
             {
-                PngWriter.Write(Path.ChangeExtension(path, null) + "_alpha.png", width, height, alpha, 1);
+                return;
             }
-            Log.Info($"Captured {path} ({width}x{height}, {stats})");
+            CompositionPreview.Image? quad = images.TryGetValue("ui", out var ui) ? ui : images.TryGetValue("menu", out var menu) ? menu : null;
+            for (int eye = 0; eye < 2; eye++)
+            {
+                CompositionPreview.Image? eyeImage = images.TryGetValue(eye == 0 ? "left" : "right", out var e) ? e : null;
+                int size = eyeImage?.Width ?? quad?.Width ?? 1024;
+                CompositionPreview.Image view = CompositionPreview.Compose(snapshot, eye, eyeImage, quad, size, size, out string stats);
+                string path = $"{prefix}_{(eye == 0 ? "left" : "right")}_view.png";
+                PngWriter.Write(path, view.Width, view.Height, view.Pixels, 4);
+                Log.Info($"Simulated headset view {path}: {stats}");
+            }
         }
         catch (Exception e)
         {
-            Log.Error($"Saving capture {path} failed", e);
+            Log.Error($"Saving capture {prefix} failed", e);
         }
+    }
+
+    private static string AlphaStats(CompositionPreview.Image image)
+    {
+        byte[] p = image.Pixels;
+        int count = p.Length / 4, zero = 0, colorWithoutAlpha = 0, opaque = 0;
+        for (int i = 0; i < count; i++)
+        {
+            byte a = p[i * 4 + 3];
+            if (a == 0)
+            {
+                zero++;
+                if ((p[i * 4] | p[i * 4 + 1] | p[i * 4 + 2]) > 8)
+                {
+                    colorWithoutAlpha++;
+                }
+            }
+            else if (a == 255)
+            {
+                opaque++;
+            }
+        }
+        return $"alpha: {100.0 * zero / count:0.#}% transparent ({100.0 * colorWithoutAlpha / count:0.##}% of pixels have color but no alpha), " +
+               $"{100.0 * (count - zero - opaque) / count:0.#}% partial, {100.0 * opaque / count:0.#}% opaque";
     }
 }

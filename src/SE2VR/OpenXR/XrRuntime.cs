@@ -41,6 +41,23 @@ internal sealed unsafe class XrRuntime : IDisposable
     /// <summary>The instance or session hit an unrecoverable error; VR stays off for the rest of the game session.</summary>
     public bool IsLost { get; private set; }
 
+    /// <summary>
+    /// Test switch (environment variable SE2VR_FORCE_RENDER=1, set by the automated test scripts): render and submit
+    /// layers even when the runtime says the frame will not be shown, e.g. when nobody is wearing the headset.
+    /// OpenXR allows this; shouldRender is only a hint to save GPU work.
+    /// </summary>
+    public bool ForceRender { get; } = Environment.GetEnvironmentVariable("SE2VR_FORCE_RENDER") == "1";
+
+    /// <summary>
+    /// Test switch (environment variable SE2VR_FAKE_HEAD=1): replace the tracked eye poses with an ideal seated head -
+    /// eyes level, looking straight ahead, at the measured eye separation - so captures of an unworn headset show
+    /// what a player sitting upright would see. The real per-eye fields of view are kept.
+    /// </summary>
+    public bool FakeHead { get; } = Environment.GetEnvironmentVariable("SE2VR_FAKE_HEAD") == "1";
+
+    /// <summary>The runtime wants this frame rendered (or <see cref="ForceRender"/> is set).</summary>
+    public bool ShouldRender => IsFrameBegun && (FrameState.ShouldRender != 0 || ForceRender);
+
     // Per-frame state, valid between BeginFrame and EndFrame.
     public XrFrameState FrameState;
     public readonly XrView[] Views = new XrView[2];
@@ -333,7 +350,7 @@ internal sealed unsafe class XrRuntime : IDisposable
         }
         IsFrameBegun = true;
 
-        if (FrameState.ShouldRender != 0)
+        if (ShouldRender)
         {
             if (_recenterInFrames >= 0 && _recenterInFrames-- == 0 && !TryRecenter(FrameState.PredictedDisplayTime))
             {
@@ -360,6 +377,16 @@ internal sealed unsafe class XrRuntime : IDisposable
             {
                 Log.Warn($"xrLocateViews failed: {Describe(result)}");
             }
+            if (FakeHead && result >= 0 && count == 2)
+            {
+                float dx = Views[1].Pose.Position.X - Views[0].Pose.Position.X;
+                float dy = Views[1].Pose.Position.Y - Views[0].Pose.Position.Y;
+                float dz = Views[1].Pose.Position.Z - Views[0].Pose.Position.Z;
+                float halfIpd = Math.Clamp(MathF.Sqrt(dx * dx + dy * dy + dz * dz), 0.05f, 0.08f) * 0.5f;
+                Views[0].Pose = new XrPosef { Orientation = XrQuaternionf.Identity, Position = new XrVector3f { X = -halfIpd } };
+                Views[1].Pose = new XrPosef { Orientation = XrQuaternionf.Identity, Position = new XrVector3f { X = halfIpd } };
+                ViewsValid = true;
+            }
         }
         return true;
     }
@@ -379,7 +406,7 @@ internal sealed unsafe class XrRuntime : IDisposable
     private bool TryRecenter(long time)
     {
         // Before the session is visible SteamVR reports a placeholder identity pose; wait for real tracking.
-        if (State != XrSessionState.Visible && State != XrSessionState.Focused)
+        if (State != XrSessionState.Visible && State != XrSessionState.Focused && !(ForceRender && State == XrSessionState.Synchronized))
         {
             return false;
         }

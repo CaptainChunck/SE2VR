@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Keen.VRage.Library.Mathematics;
 using Keen.VRage.Render.Data;
@@ -33,8 +34,14 @@ internal static unsafe class StereoRenderer
     public static int CurrentEye { get; private set; } = -1;
 
     private static readonly RenderView[] _eyeViews = new RenderView[2];
-    private static readonly RenderView[] _eyePreviousViews = new RenderView[2];
     private static readonly bool[] _eyeHasHistory = new bool[2];
+
+    /// <summary>
+    /// View of the most recent scene draw (either eye). The engine's temporal effects (clouds, water, stochastic
+    /// transparency, GI) keep one ping-pong history that flips on every draw, so the history in the buffer always comes
+    /// from the previous draw - the other eye. Reporting that view as "previous" makes their reprojection match it.
+    /// </summary>
+    private static RenderView? _lastDrawnView;
 
     private static readonly XrImageSwapchain?[] _eyeSwapchains = new XrImageSwapchain?[2];
     private static XrImageSwapchain? _uiSwapchain;
@@ -48,6 +55,14 @@ internal static unsafe class StereoRenderer
     private static bool _loggedMenu;
     private static bool _loggedFsr;
     private static int _framesWithoutWorld = 1_000_000;
+
+    private static readonly bool _testMono = Environment.GetEnvironmentVariable("SE2VR_TEST_MONO") == "1";
+
+    // Diagnostics: SE2VR_ENGINE_FOV=<degrees> overrides the field of view the engine's heuristics see.
+    private static readonly float _engineFovOverride =
+        float.TryParse(Environment.GetEnvironmentVariable("SE2VR_ENGINE_FOV"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float degrees)
+            ? degrees * MathF.PI / 180f
+            : 0f;
 
     public static void Draw(Render12EngineComponent engine, bool draw, ResizableRWRenderTargetTexture finalLDRBuffer)
     {
@@ -74,6 +89,7 @@ internal static unsafe class StereoRenderer
 
     private static void DrawInternal(XrRuntime xr, bool draw, ResizableRWRenderTargetTexture finalLDRBuffer)
     {
+        long frameStart = Stopwatch.GetTimestamp();
         VRConfig config = VRConfig.Current;
         SettingsManager settings = CoreSystems.Settings;
         if (config.DisableFsr && settings._drs.AAMode == AAMode.FSR)
@@ -155,8 +171,10 @@ internal static unsafe class StereoRenderer
             }
             _framesWithoutWorld = 0;
         }
+        long waitStart = Stopwatch.GetTimestamp();
         bool frameBegun = xr.BeginFrame();
-        bool shouldRender = frameBegun && xr.FrameState.ShouldRender != 0;
+        long waitTicks = Stopwatch.GetTimestamp() - waitStart;
+        bool shouldRender = frameBegun && xr.ShouldRender;
         bool stereo = shouldRender && sceneDraw && xr.ViewsValid;
         FrameCapture.BeginFrame();
         bool menuPanel = shouldRender && !sceneDraw;
@@ -169,6 +187,7 @@ internal static unsafe class StereoRenderer
         }
 
         uint layerCount = 0;
+        bool quadSubmitted = false;
         if (sceneDraw)
         {
             if (stereo)
@@ -177,6 +196,7 @@ internal static unsafe class StereoRenderer
                 DrawStereoScene();
                 bool uiDrawn = uiWanted && DrawUiLayer();
                 layerCount = BuildStereoLayers(xr, uiDrawn);
+                quadSubmitted = uiDrawn;
                 if (!_loggedStereo)
                 {
                     _loggedStereo = true;
@@ -202,6 +222,7 @@ internal static unsafe class StereoRenderer
             if (menuPanel && CopyToImage(_uiSwapchain!, finalLDRBuffer, "VR.MenuPanel", "menu"))
             {
                 layerCount = BuildMenuLayer(xr);
+                quadSubmitted = true;
                 if (!_loggedMenu)
                 {
                     _loggedMenu = true;
@@ -238,7 +259,21 @@ internal static unsafe class StereoRenderer
         // Everything that writes the OpenXR images has now been submitted to the direct queue.
         ReleaseImages();
         xr.EndFrame(_layers, layerCount);
-        FrameCapture.EndFrame(VRSystem.PluginDirectory);
+        FramePerf.Record(Stopwatch.GetTimestamp() - frameStart - waitTicks, waitTicks, stereo, xr.FrameState.PredictedDisplayPeriod);
+        if (FrameCapture.Active)
+        {
+            CompositionSnapshot? snapshot = _quadLayer == null ? null : new CompositionSnapshot
+            {
+                Views = (XrView[])xr.Views.Clone(),
+                HasProjection = stereo,
+                HasQuad = quadSubmitted,
+                QuadBlended = stereo,
+                QuadPose = _quadLayer->Pose,
+                QuadWidth = _quadLayer->Size.Width,
+                QuadHeight = _quadLayer->Size.Height
+            };
+            FrameCapture.EndFrame(VRSystem.PluginDirectory, snapshot);
+        }
     }
 
     /// <summary>Original single-view path, used when the headset does not want a frame (e.g. dashboard open).</summary>
@@ -262,13 +297,17 @@ internal static unsafe class StereoRenderer
         RenderView centerPrevious = settings._previousRenderView;
         OverridesSettings overrides = settings._overrides;
         settings._overrides.UI = false; // The UI goes to its own layer, see DrawUiLayer.
+        if (!center.LastUpdateWasSmooth)
+        {
+            _lastDrawnView = null; // camera cut (respawn, teleport): don't reproject history across it
+        }
         try
         {
             for (int eye = 0; eye < 2; eye++)
             {
                 BuildEyeView(eye, in center);
                 liveView = _eyeViews[eye];
-                settings._previousRenderView = _eyePreviousViews[eye];
+                settings._previousRenderView = _lastDrawnView ?? _eyeViews[eye];
                 CurrentEye = eye;
 
                 settings.OnBeginDraw();
@@ -285,6 +324,7 @@ internal static unsafe class StereoRenderer
                 settings.OnEndDraw();
 
                 _eyeViews[eye] = liveView; // keep what the draw updated (jitter state)
+                _lastDrawnView = liveView;
                 CopyToImage(_eyeSwapchains[eye]!, target, eye == 0 ? "VR.LeftEye" : "VR.RightEye", eye == 0 ? "left" : "right");
             }
         }
@@ -296,10 +336,9 @@ internal static unsafe class StereoRenderer
             settings._previousRenderView = centerPrevious;
         }
 
-        // Per-eye equivalent of SettingsManager.OnFrameEndDisposal: each eye keeps its own previous view and speed.
+        // Per-eye equivalent of SettingsManager.OnFrameEndDisposal: each eye keeps its own speed and smoothing state.
         for (int eye = 0; eye < 2; eye++)
         {
-            _eyePreviousViews[eye] = _eyeViews[eye];
             _eyeViews[eye].OnFrameEnd();
         }
     }
@@ -310,6 +349,13 @@ internal static unsafe class StereoRenderer
     /// </summary>
     private static void BuildEyeView(int eye, in RenderView center)
     {
+        if (_testMono)
+        {
+            // Diagnostics (SE2VR_TEST_MONO=1): both eyes get the game's own camera and projection, untouched.
+            _eyeViews[eye] = center;
+            _eyeHasHistory[eye] = true;
+            return;
+        }
         XrView xrView = VRSystem.Xr!.Views[eye];
         MatrixD eyeLocal = XrMath.ToMatrixD(xrView.Pose, VRConfig.Current.WorldScale);
         MatrixD eyeWorld = eyeLocal * center.InvViewD;
@@ -328,6 +374,10 @@ internal static unsafe class StereoRenderer
         view.MaxBufferedCameraSpeed = hasHistory ? history.MaxBufferedCameraSpeed : 0.0;
 
         XrMath.GetEngineCameraParameters(xrView.Fov, out float engineFov, out Vector2 projectionOffset);
+        if (_engineFovOverride > 0f)
+        {
+            engineFov = _engineFovOverride; // diagnostics only (SE2VR_ENGINE_FOV)
+        }
         view.SetCameraParameters(in eyeWorld, engineFov, center.NearClipping, center.FarClipping, center.VeryFarClipping, projectionOffset, smooth: true);
 
         // SetCameraParameters derives the aspect ratio from the render resolution; replace the projection with the
@@ -340,11 +390,7 @@ internal static unsafe class StereoRenderer
         MatrixD viewD = view.ViewD;
         view.Projection = RenderView.CreateProjectionMatrices(in projection, in viewAtOrigin, in viewD);
 
-        if (!hasHistory)
-        {
-            _eyePreviousViews[eye] = view;
-            _eyeHasHistory[eye] = true;
-        }
+        _eyeHasHistory[eye] = true;
     }
 
     private static void RenderPendingOffscreenUi()
@@ -580,5 +626,6 @@ internal static unsafe class StereoRenderer
         {
             _eyeHasHistory[eye] = false;
         }
+        _lastDrawnView = null;
     }
 }

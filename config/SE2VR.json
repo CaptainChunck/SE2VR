@@ -1,4 +1,4 @@
-﻿{
+{
   "Enabled": true,
   "RenderScale": 0.75,
   "WorldScale": 1.0,
@@ -7,7 +7,7 @@
   "ForceWindowedResolution": true,
   "LockResolution": true,
   "RecenterKey": "Home",
-  "CaptureKey": "Ctrl+Shift+F9",
+  "CaptureKey": "Ctrl+Shift+F10",
   "DisableFsr": true,
   "SystemWaitSeconds": 15,
   "VerboseLogging": false

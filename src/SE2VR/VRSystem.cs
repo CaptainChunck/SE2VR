@@ -99,6 +99,14 @@ internal static class VRSystem
             _recenterKey = Hotkey.Parse(VRConfig.Current.RecenterKey, "recenter");
             _captureKey = Hotkey.Parse(VRConfig.Current.CaptureKey, "capture");
             Log.Info($"Recenter key: {_recenterKey?.Text ?? "none"}, capture key: {_captureKey?.Text ?? "none"}.");
+            if (xr.ForceRender)
+            {
+                Log.Warn("Test mode (SE2VR_FORCE_RENDER=1): rendering even when the headset is not displaying.");
+            }
+            if (xr.FakeHead)
+            {
+                Log.Warn("Test mode (SE2VR_FAKE_HEAD=1): using an ideal straight-ahead head pose instead of tracking.");
+            }
         }
         xr.PollEvents();
         if (xr.IsLost)
@@ -118,14 +126,23 @@ internal static class VRSystem
             xr.RequestRecenter(0);
         }
         bool capture = _captureKey?.WasPressed() == true;
-        // A file named "capture" next to the plugin also triggers a capture (handy when the keyboard is out of reach).
-        if (++_frame % 30 == 0)
+        // A file named "capture" next to the plugin also triggers a capture; its text (optional) labels the files.
+        // Used by the automated test scripts, and handy when the keyboard is out of reach.
+        if (++_frame % 10 == 0)
         {
             string trigger = System.IO.Path.Combine(PluginDirectory, "capture");
             if (System.IO.File.Exists(trigger))
             {
-                System.IO.File.Delete(trigger);
-                capture = true;
+                try
+                {
+                    FrameCapture.Label = System.IO.File.ReadAllText(trigger).Trim();
+                    System.IO.File.Delete(trigger);
+                    capture = true;
+                }
+                catch (System.IO.IOException)
+                {
+                    // Still being written; pick it up next time.
+                }
             }
         }
         if (capture)

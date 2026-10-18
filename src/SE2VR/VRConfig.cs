@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text.Json;
 
@@ -34,7 +34,7 @@ internal sealed class VRConfig
     public string RecenterKey { get; set; } = "Home";
 
     /// <summary>Key that saves the images sent to the headset as PNGs in the "captures" folder. Empty disables it.</summary>
-    public string CaptureKey { get; set; } = "Ctrl+Shift+F9";
+    public string CaptureKey { get; set; } = "Ctrl+Shift+F10";
 
     /// <summary>FSR keeps one temporal history, which both eyes would share and smear. Falls back to FXAA in VR.</summary>
     public bool DisableFsr { get; set; } = true;
@@ -45,6 +45,13 @@ internal sealed class VRConfig
     public bool VerboseLogging { get; set; }
 
     public static VRConfig Current { get; private set; } = new();
+
+    // Relaxed escaping keeps hotkeys readable ("Ctrl+R" instead of "Ctrl\u002BR").
+    private static readonly JsonSerializerOptions WriteOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     public static void Load(string path)
     {
@@ -62,7 +69,7 @@ internal sealed class VRConfig
             }
             else
             {
-                File.WriteAllText(path, JsonSerializer.Serialize(Current, new JsonSerializerOptions { WriteIndented = true }));
+                File.WriteAllText(path, JsonSerializer.Serialize(Current, WriteOptions));
                 Log.Info($"Wrote default config {path}");
             }
         }
@@ -83,7 +90,7 @@ internal sealed class VRConfig
         try
         {
             string current = File.Exists(path) ? File.ReadAllText(path) : "";
-            string complete = JsonSerializer.Serialize(Current, new JsonSerializerOptions { WriteIndented = true });
+            string complete = JsonSerializer.Serialize(Current, WriteOptions);
             using JsonDocument existing = JsonDocument.Parse(current.Length > 0 ? current : "{}", new JsonDocumentOptions
             {
                 CommentHandling = JsonCommentHandling.Skip,
