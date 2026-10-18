@@ -54,13 +54,16 @@ foreach ($file in Get-ChildItem $source -File) {
 }
 Write-Host "Installed to $destination"
 
+# Older versions started the game through a PowerShell script; the launcher program replaces it.
+Remove-Item (Join-Path $destination 'Launch-SE2VR.ps1') -ErrorAction SilentlyContinue
+
 # Desktop shortcut: starts the game in VR without changing Steam's launch options.
-$launcher = Join-Path $destination 'Launch-SE2VR.ps1'
+$launcher = Join-Path $destination 'SE2VR Launcher.exe'
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Space Engineers 2 VR.lnk'
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`""
+$shortcut.TargetPath = $launcher
+$shortcut.Arguments = ''
 $shortcut.WorkingDirectory = $destination
 $shortcut.Description = 'Space Engineers 2 in VR (SE2VR mod)'
 if ($gameExe) { $shortcut.IconLocation = "$gameExe,0" }

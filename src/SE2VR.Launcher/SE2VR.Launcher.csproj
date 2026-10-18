@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The "Space Engineers 2 VR" desktop shortcut's target: starts the game with the SE2VR plugin.
+    A Windows program (no console window) on .NET Framework 4.8, which every Windows 10/11 PC has.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>SE2VR Launcher</AssemblyName>
+    <RootNamespace>SE2VR.Launcher</RootNamespace>
+    <Version>0.4.1</Version>
+    <Product>SE2VR</Product>
+    <Description>Starts Space Engineers 2 with the SE2VR mod</Description>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>$(MSBuildThisFileDirectory)..\..\build\Launcher\</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+
+</Project>

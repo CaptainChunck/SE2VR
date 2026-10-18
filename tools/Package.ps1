@@ -4,17 +4,22 @@
   Players need no .NET SDK; the game brings the .NET runtime.
 #>
 param(
-    [string]$GameDir
+    [string]$GameDir,
+    # Version in the zip name; defaults to the plugin's version (set it when only the launcher or installer changed).
+    [string]$Version
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 
 $project = Join-Path $repo 'src\SE2VR\SE2VR.csproj'
-$version = ([xml](Get-Content $project)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+if (-not $Version) { $Version = ([xml](Get-Content $project)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1 }
+$version = $Version
 $buildArgs = @('build', $project, '-c', 'Release', '-nologo', '-v:minimal')
 if ($GameDir) { $buildArgs += "/p:SE2GameDir=$GameDir" }
 & dotnet @buildArgs
 if ($LASTEXITCODE -ne 0) { throw "Build failed." }
+& dotnet build (Join-Path $repo 'src\SE2VR.Launcher\SE2VR.Launcher.csproj') -c Release -nologo -v:minimal
+if ($LASTEXITCODE -ne 0) { throw "Launcher build failed." }
 
 $name = "SE2VR-v$version"
 $dist = Join-Path $repo 'dist'
@@ -25,6 +30,9 @@ New-Item -ItemType Directory -Force (Join-Path $stage 'files') | Out-Null
 $build = Join-Path $repo 'build\Release'
 foreach ($file in 'SE2VR.dll', 'SE2VR.pdb', 'SE2VR.deps.json', 'SE2VR.runtimeconfig.json', '0Harmony.dll', 'SE2VR.json') {
     Copy-Item (Join-Path $build $file) (Join-Path $stage 'files')
+}
+foreach ($file in 'SE2VR Launcher.exe', 'SE2VR Launcher.exe.config') {
+    Copy-Item (Join-Path $repo "build\Launcher\$file") (Join-Path $stage 'files')
 }
 # Text files get Windows line endings (cmd.exe needs them in .cmd files).
 foreach ($file in Get-ChildItem (Join-Path $repo 'package') -Recurse -File) {
