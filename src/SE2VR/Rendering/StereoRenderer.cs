@@ -14,6 +14,7 @@ using Keen.VRage.Render12.SceneSystem.Components;
 using Keen.VRage.Render12.Utils;
 using SE2VR.OpenXR;
 using Vortice.Direct3D12;
+using Box = Vortice.Mathematics.Box;
 using Color = Vortice.Mathematics.Color;
 
 namespace SE2VR.Rendering;
@@ -48,8 +49,14 @@ internal static unsafe class StereoRenderer
 
     private static XrCompositionLayerProjection* _projectionLayer;
     private static XrCompositionLayerProjectionView* _projectionViews;
-    private static XrCompositionLayerQuad* _quadLayer;
+    private static XrCompositionLayerQuad* _quadLayer; // UI panel when flat
+    private static XrCompositionLayerCylinderKHR* _cylinderLayer; // UI panel when curved
+    private static XrCompositionLayerQuad* _cursorLayer;
     private static void** _layers;
+    private static UiPanel _panel;
+
+    /// <summary>The layers submitted this frame, for the simulated headset views of a capture.</summary>
+    private static readonly List<PreviewLayer> _previewLayers = new();
 
     private static bool _loggedStereo;
     private static bool _loggedMenu;
@@ -187,7 +194,7 @@ internal static unsafe class StereoRenderer
         }
 
         uint layerCount = 0;
-        bool quadSubmitted = false;
+        _previewLayers.Clear();
         if (sceneDraw)
         {
             if (stereo)
@@ -196,7 +203,6 @@ internal static unsafe class StereoRenderer
                 DrawStereoScene();
                 bool uiDrawn = uiWanted && DrawUiLayer();
                 layerCount = BuildStereoLayers(xr, uiDrawn);
-                quadSubmitted = uiDrawn;
                 if (!_loggedStereo)
                 {
                     _loggedStereo = true;
@@ -219,10 +225,10 @@ internal static unsafe class StereoRenderer
         else
         {
             DrawUiOnly(finalLDRBuffer);
+            // The UI canvas is the top-left part of the final image (see UiCanvas).
             if (menuPanel && CopyToImage(_uiSwapchain!, finalLDRBuffer, "VR.MenuPanel", "menu"))
             {
                 layerCount = BuildMenuLayer(xr);
-                quadSubmitted = true;
                 if (!_loggedMenu)
                 {
                     _loggedMenu = true;
@@ -262,15 +268,11 @@ internal static unsafe class StereoRenderer
         FramePerf.Record(Stopwatch.GetTimestamp() - frameStart - waitTicks, waitTicks, stereo, xr.FrameState.PredictedDisplayPeriod);
         if (FrameCapture.Active)
         {
-            CompositionSnapshot? snapshot = _quadLayer == null ? null : new CompositionSnapshot
+            var snapshot = new CompositionSnapshot
             {
                 Views = (XrView[])xr.Views.Clone(),
                 HasProjection = stereo,
-                HasQuad = quadSubmitted,
-                QuadBlended = stereo,
-                QuadPose = _quadLayer->Pose,
-                QuadWidth = _quadLayer->Size.Width,
-                QuadHeight = _quadLayer->Size.Height
+                Layers = _previewLayers.ToArray()
             };
             FrameCapture.EndFrame(VRSystem.PluginDirectory, snapshot);
         }
@@ -448,7 +450,8 @@ internal static unsafe class StereoRenderer
             block.BeginNextBlock("UI");
             if (CoreSystems.Settings.Overrides.TopMostPass && CoreSystems.Settings.Overrides.UI)
             {
-                CoreSystems.MainUISystem.DoWork(commandList, finalLDRBuffer, finalLDRBuffer.Resolution);
+                // Viewport = the UI canvas, so the game's safe-area scaling (if any) stays centered on the canvas.
+                CoreSystems.MainUISystem.DoWork(commandList, finalLDRBuffer, UiCanvas.Fit(finalLDRBuffer.Resolution));
             }
             block.BeginNextBlock("EndDraw");
             CoreSystems.ShaderAsserts.PrepareReadback(commandList);
@@ -457,6 +460,7 @@ internal static unsafe class StereoRenderer
         CoreSystems.Settings.OnEndDraw();
     }
 
+    /// <summary>Copies the source image, or its top-left part when the OpenXR image is smaller, into the acquired image.</summary>
     private static bool CopyToImage(XrImageSwapchain swapchain, ResizableRWRenderTargetTexture source, string name, string captureName)
     {
         BackBuffer? target = swapchain.Current;
@@ -466,12 +470,28 @@ internal static unsafe class StereoRenderer
         }
         // While the game switches resolution the engine can hand out a texture of the previous size for one frame.
         var sourceDescription = source.D3DResourceDescription;
-        if ((int)sourceDescription.Width != swapchain.Width || (int)sourceDescription.Height != swapchain.Height)
+        int sourceWidth = (int)sourceDescription.Width, sourceHeight = (int)sourceDescription.Height;
+        if (sourceWidth != swapchain.Width || sourceHeight < swapchain.Height)
         {
             return false;
         }
         using DirectCommandList commandList = CoreSystems.FrameDispatcher.CreateDirectCommandList(name);
-        commandList.CopyResource(target, source);
+        if (sourceHeight == swapchain.Height)
+        {
+            commandList.CopyResource(target, source);
+        }
+        else
+        {
+            // Same barriers as CopyResource, then a region copy.
+            commandList.OnAction();
+            commandList.RequestResourceState(target.AutoResourceState, ResourceStates.CopyDest, discardResource: false);
+            commandList.RequestResourceState(source.AutoResourceState, ResourceStates.CopySource, discardResource: true);
+            commandList.ResolveResourceStates();
+            commandList._d3dCommandList.CopyTextureRegion(
+                new TextureCopyLocation(target.D3DResource, 0), 0, 0, 0,
+                new TextureCopyLocation(source.D3DResource, 0),
+                new Box(0, 0, 0, swapchain.Width, swapchain.Height, 1));
+        }
         commandList.ExplicitStateTransition(target.AutoResourceState, ResourceStates.RenderTarget, discardResource: false);
         FrameCapture.Record(commandList, target, captureName);
         return true;
@@ -504,8 +524,10 @@ internal static unsafe class StereoRenderer
             }
             _eyeSwapchains[0] = new XrImageSwapchain(xr, "LeftEye", width, height);
             _eyeSwapchains[1] = new XrImageSwapchain(xr, "RightEye", width, height);
-            _uiSwapchain = new XrImageSwapchain(xr, "UI", width, height);
+            Vector2I canvas = UiCanvas.Fit(new Vector2I(width, height));
+            _uiSwapchain = new XrImageSwapchain(xr, "UI", canvas.X, canvas.Y);
             EnsureLayerMemory();
+            VrCursor.LogWindowPlacement(new Vector2I(width, height), canvas);
             return true;
         }
         catch (Exception e)
@@ -536,6 +558,7 @@ internal static unsafe class StereoRenderer
         _eyeSwapchains[0]?.Release();
         _eyeSwapchains[1]?.Release();
         _uiSwapchain?.Release();
+        VrCursor.ReleaseImage();
     }
 
     private static uint BuildStereoLayers(XrRuntime xr, bool withUi)
@@ -563,36 +586,93 @@ internal static unsafe class StereoRenderer
             return 1;
         }
         // The UI was drawn over transparent black, which leaves premultiplied color: blend it over the world.
-        SetQuad(xr, XrConst.CompositionLayerBlendTextureSourceAlpha);
-        _layers[1] = _quadLayer;
-        return 2;
+        _layers[1] = SetPanel(xr, blended: true, "ui");
+        if (!SetCursor(xr))
+        {
+            return 2;
+        }
+        _layers[2] = _cursorLayer;
+        return 3;
     }
 
     private static uint BuildMenuLayer(XrRuntime xr)
     {
-        SetQuad(xr, 0); // opaque virtual screen
-        _layers[0] = _quadLayer;
-        return 1;
+        _layers[0] = SetPanel(xr, blended: false, "menu"); // opaque virtual screen
+        if (!SetCursor(xr))
+        {
+            return 1;
+        }
+        _layers[1] = _cursorLayer;
+        return 2;
     }
 
-    private static void SetQuad(XrRuntime xr, ulong flags)
+    /// <summary>Fills in the UI panel layer (curved or flat, see <see cref="UiPanel"/>) and returns it.</summary>
+    private static void* SetPanel(XrRuntime xr, bool blended, string imageName)
     {
-        VRConfig config = VRConfig.Current;
         XrImageSwapchain ui = _uiSwapchain!;
-        *_quadLayer = new XrCompositionLayerQuad
+        _panel = UiPanel.FromConfig(xr, ui.Width, ui.Height);
+        ulong flags = blended ? XrConst.CompositionLayerBlendTextureSourceAlpha : 0;
+        if (_panel.Curved)
         {
-            Type = XrStructureType.CompositionLayerQuad,
-            LayerFlags = flags,
-            Space = xr.RenderSpace,
-            EyeVisibility = XrConst.EyeVisibilityBoth,
-            SubImage = ui.SubImage,
-            Pose = new XrPosef
+            *_cylinderLayer = new XrCompositionLayerCylinderKHR
             {
-                Orientation = XrQuaternionf.Identity,
-                Position = new XrVector3f { Z = -config.UiDistance }
-            },
-            Size = new XrExtent2Df { Width = config.UiWidth, Height = config.UiWidth * ui.Height / ui.Width }
-        };
+                Type = XrStructureType.CompositionLayerCylinderKHR,
+                LayerFlags = flags,
+                Space = xr.RenderSpace,
+                EyeVisibility = XrConst.EyeVisibilityBoth,
+                SubImage = ui.SubImage,
+                Pose = _panel.CenterPose,
+                Radius = _panel.Distance,
+                CentralAngle = _panel.Angle,
+                AspectRatio = _panel.Aspect
+            };
+        }
+        else
+        {
+            *_quadLayer = new XrCompositionLayerQuad
+            {
+                Type = XrStructureType.CompositionLayerQuad,
+                LayerFlags = flags,
+                Space = xr.RenderSpace,
+                EyeVisibility = XrConst.EyeVisibilityBoth,
+                SubImage = ui.SubImage,
+                Pose = _panel.CenterPose,
+                Size = new XrExtent2Df { Width = _panel.Width, Height = _panel.Height }
+            };
+        }
+        if (FrameCapture.Active)
+        {
+            _previewLayers.Add(new PreviewLayer
+            {
+                Image = imageName,
+                Blended = blended,
+                Pose = _panel.CenterPose,
+                Width = _panel.Width,
+                Height = _panel.Height,
+                Radius = _panel.Curved ? _panel.Distance : 0f,
+                CentralAngle = _panel.Angle,
+                AspectRatio = _panel.Aspect
+            });
+        }
+        return _panel.Curved ? _cylinderLayer : _quadLayer;
+    }
+
+    /// <summary>Adds the mouse pointer on top of the panel while the game shows it (call after <see cref="SetPanel"/>).</summary>
+    private static bool SetCursor(XrRuntime xr)
+    {
+        XrImageSwapchain ui = _uiSwapchain!;
+        XrImageSwapchain eye = _eyeSwapchains[0]!;
+        if (!VrCursor.TryGetCanvasPosition(new Vector2I(eye.Width, eye.Height), new Vector2I(ui.Width, ui.Height), out float u, out float v) ||
+            !VrCursor.EnsureImage(xr))
+        {
+            return false;
+        }
+        *_cursorLayer = VrCursor.CreateLayer(xr.RenderSpace, in _panel, u, v, out float size);
+        if (FrameCapture.Active)
+        {
+            _previewLayers.Add(new PreviewLayer { Image = "cursor", Blended = true, Pose = _cursorLayer->Pose, Width = size, Height = size });
+        }
+        return true;
     }
 
     private static void EnsureLayerMemory()
@@ -604,6 +684,8 @@ internal static unsafe class StereoRenderer
         _projectionLayer = (XrCompositionLayerProjection*)NativeMemory.AllocZeroed((nuint)sizeof(XrCompositionLayerProjection));
         _projectionViews = (XrCompositionLayerProjectionView*)NativeMemory.AllocZeroed((nuint)(2 * sizeof(XrCompositionLayerProjectionView)));
         _quadLayer = (XrCompositionLayerQuad*)NativeMemory.AllocZeroed((nuint)sizeof(XrCompositionLayerQuad));
+        _cylinderLayer = (XrCompositionLayerCylinderKHR*)NativeMemory.AllocZeroed((nuint)sizeof(XrCompositionLayerCylinderKHR));
+        _cursorLayer = (XrCompositionLayerQuad*)NativeMemory.AllocZeroed((nuint)sizeof(XrCompositionLayerQuad));
         _layers = (void**)NativeMemory.AllocZeroed((nuint)(4 * sizeof(void*)));
     }
 
@@ -622,6 +704,7 @@ internal static unsafe class StereoRenderer
     public static void Shutdown()
     {
         DisposeSwapchains();
+        VrCursor.Dispose();
         for (int eye = 0; eye < 2; eye++)
         {
             _eyeHasHistory[eye] = false;

@@ -71,6 +71,7 @@ internal enum XrStructureType : int
     SwapchainImageAcquireInfo = 55,
     SwapchainImageWaitInfo = 56,
     SwapchainImageReleaseInfo = 57,
+    CompositionLayerCylinderKHR = 1000017000,
     GraphicsBindingD3D12KHR = 1000028000,
     SwapchainImageD3D12KHR = 1000028001,
     GraphicsRequirementsD3D12KHR = 1000028002,
@@ -99,6 +100,8 @@ internal static class XrConst
     public const int EnvironmentBlendModeOpaque = 1;
     public const int EyeVisibilityBoth = 0;
 
+    public const ulong SwapchainCreateStaticImage = 0x2;
+
     public const ulong SwapchainUsageColorAttachment = 0x1;
     public const ulong SwapchainUsageTransferDst = 0x10;
     public const ulong SwapchainUsageSampled = 0x20;
@@ -120,6 +123,7 @@ internal static class XrConst
     public const long DxgiR8G8B8A8UnormSrgb = 29;
 
     public const string KhrD3D12EnableExtension = "XR_KHR_D3D12_enable";
+    public const string KhrCompositionLayerCylinderExtension = "XR_KHR_composition_layer_cylinder";
 
     public static ulong MakeVersion(ulong major, ulong minor, ulong patch) =>
         ((major & 0xffff) << 48) | ((minor & 0xffff) << 32) | (patch & 0xffffffff);
@@ -435,6 +439,22 @@ internal unsafe struct XrCompositionLayerQuad
     public XrSwapchainSubImage SubImage;
     public XrPosef Pose;
     public XrExtent2Df Size;
+}
+
+/// <summary>XR_KHR_composition_layer_cylinder: an image on the inside of a cylinder section around the viewer.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct XrCompositionLayerCylinderKHR
+{
+    public XrStructureType Type;
+    public void* Next;
+    public ulong LayerFlags;
+    public ulong Space;
+    public int EyeVisibility;
+    public XrSwapchainSubImage SubImage;
+    public XrPosef Pose;
+    public float Radius;
+    public float CentralAngle;
+    public float AspectRatio;
 }
 
 [StructLayout(LayoutKind.Sequential)]

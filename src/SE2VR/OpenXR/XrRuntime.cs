@@ -33,6 +33,9 @@ internal sealed unsafe class XrRuntime : IDisposable
     public XrViewConfigurationView[] ViewConfigs { get; } = new XrViewConfigurationView[2];
     public uint MaxLayerCount { get; private set; }
 
+    /// <summary>XR_KHR_composition_layer_cylinder is enabled: the UI panel can be curved.</summary>
+    public bool SupportsCylinder { get; private set; }
+
     public XrSessionState State { get; private set; } = XrSessionState.Unknown;
 
     /// <summary>xrBeginSession succeeded and xrEndSession has not been called yet: frames must be submitted.</summary>
@@ -100,7 +103,7 @@ internal sealed unsafe class XrRuntime : IDisposable
         {
             extensions[i].Type = XrStructureType.ExtensionProperties;
         }
-        bool hasD3D12 = false;
+        var available = new HashSet<string>();
         fixed (XrExtensionProperties* p = extensions)
         {
             Check(Api.EnumerateInstanceExtensionProperties(null, count, &count, p), "xrEnumerateInstanceExtensionProperties");
@@ -108,12 +111,17 @@ internal sealed unsafe class XrRuntime : IDisposable
             {
                 string name = Utf8(p[i].ExtensionName, 128);
                 Log.Debug($"  OpenXR extension: {name} v{p[i].ExtensionVersion}");
-                hasD3D12 |= name == XrConst.KhrD3D12EnableExtension;
+                available.Add(name);
             }
         }
-        if (!hasD3D12)
+        if (!available.Contains(XrConst.KhrD3D12EnableExtension))
         {
             throw new InvalidOperationException($"The active OpenXR runtime does not support {XrConst.KhrD3D12EnableExtension}, which Space Engineers 2's DirectX 12 renderer needs.");
+        }
+        var enabled = new List<string> { XrConst.KhrD3D12EnableExtension };
+        if (available.Contains(XrConst.KhrCompositionLayerCylinderExtension))
+        {
+            enabled.Add(XrConst.KhrCompositionLayerCylinderExtension);
         }
 
         XrInstanceCreateInfo info = new() { Type = XrStructureType.InstanceCreateInfo };
@@ -123,17 +131,25 @@ internal sealed unsafe class XrRuntime : IDisposable
         info.ApplicationInfo.EngineVersion = 1;
         info.ApplicationInfo.ApiVersion = XrConst.MakeVersion(1, 0, 0);
 
-        byte[] extName = Encoding.ASCII.GetBytes(XrConst.KhrD3D12EnableExtension + "\0");
-        fixed (byte* pName = extName)
+        // Null-terminated names packed into one pinned buffer.
+        byte[] packed = Encoding.ASCII.GetBytes(string.Concat(enabled.ConvertAll(name => name + "\0")));
+        fixed (byte* pPacked = packed)
         {
-            byte** names = stackalloc byte*[1];
-            names[0] = pName;
-            info.EnabledExtensionCount = 1;
+            byte** names = stackalloc byte*[enabled.Count];
+            int offset = 0;
+            for (int i = 0; i < enabled.Count; i++)
+            {
+                names[i] = pPacked + offset;
+                offset += enabled[i].Length + 1;
+            }
+            info.EnabledExtensionCount = (uint)enabled.Count;
             info.EnabledExtensionNames = names;
             ulong instance;
             Check(Api.CreateInstance(&info, &instance), "xrCreateInstance");
             Instance = instance;
         }
+        SupportsCylinder = enabled.Contains(XrConst.KhrCompositionLayerCylinderExtension);
+        Log.Info($"Curved UI panel (cylinder layers): {(SupportsCylinder ? "supported" : "not supported by this runtime, using a flat panel")}");
         Api.LoadInstanceFunctions(Instance);
 
         XrInstanceProperties props = new() { Type = XrStructureType.InstanceProperties };
@@ -473,11 +489,13 @@ internal sealed unsafe class XrRuntime : IDisposable
         }
     }
 
-    public ulong CreateSwapchain(long format, int width, int height, out nint[] images)
+    /// <param name="staticImage">A single image that is written once and shown unchanged from then on.</param>
+    public ulong CreateSwapchain(long format, int width, int height, bool staticImage, out nint[] images)
     {
         XrSwapchainCreateInfo info = new()
         {
             Type = XrStructureType.SwapchainCreateInfo,
+            CreateFlags = staticImage ? XrConst.SwapchainCreateStaticImage : 0,
             UsageFlags = XrConst.SwapchainUsageColorAttachment | XrConst.SwapchainUsageTransferDst | XrConst.SwapchainUsageSampled,
             Format = format,
             SampleCount = 1,

@@ -27,13 +27,14 @@ internal sealed class XrImageSwapchain : IDisposable
     /// <summary>The image acquired for the current frame, or null.</summary>
     public BackBuffer? Current => _acquired >= 0 ? _images[_acquired] : null;
 
-    public XrImageSwapchain(XrRuntime xr, string name, int width, int height)
+    /// <param name="staticImage">One image, acquired and written once, then shown unchanged (OpenXR static swapchain).</param>
+    public XrImageSwapchain(XrRuntime xr, string name, int width, int height, bool staticImage = false)
     {
         _xr = xr;
         Name = name;
         Width = width;
         Height = height;
-        Handle = xr.CreateSwapchain(XrConst.DxgiR8G8B8A8UnormSrgb, width, height, out nint[] textures);
+        Handle = xr.CreateSwapchain(XrConst.DxgiR8G8B8A8UnormSrgb, width, height, staticImage, out nint[] textures);
         _images = new BackBuffer[textures.Length];
         for (int i = 0; i < textures.Length; i++)
         {

@@ -37,7 +37,7 @@ public static class SE2VRInput
     [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
 
     const uint KEYEVENTF_EXTENDEDKEY = 0x1, KEYEVENTF_KEYUP = 0x2, KEYEVENTF_SCANCODE = 0x8;
-    const uint MOUSEEVENTF_LEFTDOWN = 0x2, MOUSEEVENTF_LEFTUP = 0x4;
+    const uint MOUSEEVENTF_MOVE = 0x1, MOUSEEVENTF_LEFTDOWN = 0x2, MOUSEEVENTF_LEFTUP = 0x4;
 
     public static bool Focus(IntPtr hWnd)
     {
@@ -69,6 +69,17 @@ public static class SE2VRInput
     public static void Press(ushort scan, bool down)
     {
         SendInput(1, new[] { Key(scan, !down) }, Marshal.SizeOf<INPUT>());
+    }
+
+    public static void Move(int x, int y)
+    {
+        SetCursorPos(x, y);
+        // A real (relative) move as well, so the game sees mouse input even if it ignores warps.
+        var right = new INPUT { type = 0 }; right.u.mi.dx = 1; right.u.mi.dwFlags = MOUSEEVENTF_MOVE;
+        var left = new INPUT { type = 0 }; left.u.mi.dx = -1; left.u.mi.dwFlags = MOUSEEVENTF_MOVE;
+        SendInput(1, new[] { right }, Marshal.SizeOf<INPUT>());
+        Thread.Sleep(30);
+        SendInput(1, new[] { left }, Marshal.SizeOf<INPUT>());
     }
 
     public static void Click(int x, int y)
@@ -192,9 +203,9 @@ function Set-SE2KeyState {
     [SE2VRInput]::Press([uint16]$script:ScanCodes[$Key], [bool]$Down)
 }
 
-function Send-SE2Click {
-    <# Clicks at a position given in game-image pixels (the coordinates seen in a capture of size ImageWidth x ImageHeight). #>
-    param([Parameter(Mandatory)][int]$X, [Parameter(Mandatory)][int]$Y, [int]$ImageWidth, [int]$ImageHeight)
+function ConvertTo-SE2ScreenPoint {
+    # Game-image pixels (render resolution ImageWidth x ImageHeight) -> screen coordinates of the game window.
+    param([int]$X, [int]$Y, [int]$ImageWidth, [int]$ImageHeight)
     $hwnd = Get-SE2Window
     [void][SE2VRInput]::Focus($hwnd)
     $rect = New-Object SE2VRInput+RECT
@@ -203,7 +214,33 @@ function Send-SE2Click {
     $point.X = [int]($X * ($rect.Right - $rect.Left) / $ImageWidth)
     $point.Y = [int]($Y * ($rect.Bottom - $rect.Top) / $ImageHeight)
     [void][SE2VRInput]::ClientToScreen($hwnd, [ref]$point)
+    return $point
+}
+
+function Send-SE2Click {
+    <# Clicks at a position given in game-image pixels (the coordinates seen in a capture of size ImageWidth x ImageHeight). #>
+    param([Parameter(Mandatory)][int]$X, [Parameter(Mandatory)][int]$Y, [int]$ImageWidth, [int]$ImageHeight)
+    $point = ConvertTo-SE2ScreenPoint $X $Y $ImageWidth $ImageHeight
     [SE2VRInput]::Click($point.X, $point.Y)
+}
+
+function Send-SE2MouseMove {
+    <# Moves the mouse to a position given in game-image pixels, like Send-SE2Click without clicking. #>
+    param([Parameter(Mandatory)][int]$X, [Parameter(Mandatory)][int]$Y, [int]$ImageWidth, [int]$ImageHeight)
+    $point = ConvertTo-SE2ScreenPoint $X $Y $ImageWidth $ImageHeight
+    [SE2VRInput]::Move($point.X, $point.Y)
+}
+
+function Get-SE2Resolution {
+    <# Render resolution and VR UI canvas size from the plugin log: @{ Width; Height; CanvasWidth; CanvasHeight }. #>
+    $log = @(Get-SE2PluginLog)
+    $window = $log | Where-Object { $_ -match 'Forcing a (\d+)x(\d+) window' } | Select-Object -Last 1
+    if (-not ($window -match 'Forcing a (\d+)x(\d+) window')) { throw "Render resolution not found in the plugin log." }
+    $result = @{ Width = [int]$Matches[1]; Height = [int]$Matches[2] }
+    $canvas = $log | Where-Object { $_ -match 'UI canvas for VR: (\d+)x(\d+)' } | Select-Object -Last 1
+    if ($canvas -match 'UI canvas for VR: (\d+)x(\d+)') { $result.CanvasWidth = [int]$Matches[1]; $result.CanvasHeight = [int]$Matches[2] }
+    else { $result.CanvasWidth = $result.Width; $result.CanvasHeight = $result.Height }
+    return $result
 }
 
 function Invoke-SE2Capture {
@@ -250,4 +287,4 @@ function Get-SE2TestReport {
     }
 }
 
-Export-ModuleMember -Function Get-SE2GameDir, Get-SE2Window, Get-SE2PluginLog, Wait-SE2Log, Start-SE2VRTest, Send-SE2Key, Set-SE2KeyState, Send-SE2Click, Invoke-SE2Capture, Stop-SE2VRTest, Get-SE2TestReport
+Export-ModuleMember -Function Get-SE2GameDir, Get-SE2Window, Get-SE2PluginLog, Wait-SE2Log, Start-SE2VRTest, Send-SE2Key, Set-SE2KeyState, Send-SE2Click, Send-SE2MouseMove, Get-SE2Resolution, Invoke-SE2Capture, Stop-SE2VRTest, Get-SE2TestReport

@@ -122,12 +122,12 @@ internal static class FrameCapture
             {
                 return;
             }
-            CompositionPreview.Image? quad = images.TryGetValue("ui", out var ui) ? ui : images.TryGetValue("menu", out var menu) ? menu : null;
+            images["cursor"] = new CompositionPreview.Image { Pixels = VrCursor.Pixels, Width = VrCursor.ImageSize, Height = VrCursor.ImageSize };
             for (int eye = 0; eye < 2; eye++)
             {
                 CompositionPreview.Image? eyeImage = images.TryGetValue(eye == 0 ? "left" : "right", out var e) ? e : null;
-                int size = eyeImage?.Width ?? quad?.Width ?? 1024;
-                CompositionPreview.Image view = CompositionPreview.Compose(snapshot, eye, eyeImage, quad, size, size, out string stats);
+                int size = eyeImage?.Width ?? (images.TryGetValue("menu", out var menu) ? menu.Width : 1024);
+                CompositionPreview.Image view = CompositionPreview.Compose(snapshot, eye, eyeImage, images, size, size, out string stats);
                 string path = $"{prefix}_{(eye == 0 ? "left" : "right")}_view.png";
                 PngWriter.Write(path, view.Width, view.Height, view.Pixels, 4);
                 Log.Info($"Simulated headset view {path}: {stats}");

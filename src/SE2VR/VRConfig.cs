@@ -21,8 +21,20 @@ internal sealed class VRConfig
     /// <summary>Distance of the floating menu/HUD panel from the seated head position, in meters.</summary>
     public float UiDistance { get; set; } = 1.6f;
 
-    /// <summary>Width of the floating menu/HUD panel, in meters. Height follows the game's aspect ratio.</summary>
-    public float UiWidth { get; set; } = 1.6f;
+    /// <summary>How much of your view the menu/HUD panel spans horizontally, in degrees. Larger makes text bigger.</summary>
+    public float UiWidthDegrees { get; set; } = 70f;
+
+    /// <summary>Curve the panel around you so all of it is the same distance away (if the VR runtime supports it).</summary>
+    public bool UiCurved { get; set; } = true;
+
+    /// <summary>
+    /// Shape (width / height) of the canvas the game lays its UI out on. The game's UI is designed for 16:9 screens;
+    /// the headset's eye images are almost square, which would stretch the HUD to the top and bottom of your view.
+    /// </summary>
+    public float UiAspectRatio { get; set; } = 16f / 9f;
+
+    /// <summary>Show the mouse pointer on the panel. The game uses the Windows pointer, which only appears on the monitor.</summary>
+    public bool ShowCursor { get; set; } = true;
 
     /// <summary>Force the game into a window with the per-eye resolution, so every rendered pixel is used by the headset.</summary>
     public bool ForceWindowedResolution { get; set; } = true;
@@ -80,6 +92,9 @@ internal sealed class VRConfig
         }
         Current.RenderScale = Math.Clamp(Current.RenderScale, 0.25f, 2f);
         Current.WorldScale = Math.Clamp(Current.WorldScale, 0.1f, 10f);
+        Current.UiDistance = Math.Clamp(Current.UiDistance, 0.3f, 20f);
+        Current.UiWidthDegrees = Math.Clamp(Current.UiWidthDegrees, 20f, 160f);
+        Current.UiAspectRatio = Math.Clamp(Current.UiAspectRatio, 1f, 4f);
         Log.Verbose = Current.VerboseLogging;
         AddMissingKeys(path);
     }

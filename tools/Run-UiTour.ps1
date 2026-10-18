@@ -31,19 +31,24 @@ if (-not (Wait-SE2Log -Pattern 'First stereo frame' -TimeoutSeconds 300)) {
 }
 Start-Sleep -Seconds 8 # let streaming settle and the spawn animation finish
 
+$resolution = Get-SE2Resolution
+Write-Host "Render $($resolution.Width)x$($resolution.Height), UI canvas $($resolution.CanvasWidth)x$($resolution.CanvasHeight)"
+
 # Default keys from Content\MainMenuData\Input\ActionControlMapping.def. Screens that toggle are closed with their
-# own key, so a screen that fails to open cannot leave the pause menu open for the following steps.
-#   Press = pressed before the capture, Hold = held down during the capture, After = pressed after the capture.
+# own key, so a screen that fails to open cannot leave the pause menu open for the following steps (screens with a
+# search box take letter keys as text, so those are closed with Escape).
+#   Press = pressed before the capture, Hold = held down during the capture, After = pressed after the capture,
+#   Mouse = pointer position before the capture, as fractions of the UI canvas (the VR pointer should appear there).
 $steps = @(
     @{ Name = 'hud' }
-    @{ Name = 'pause_menu';          Press = @('Escape'); After = @('Escape') }
-    @{ Name = 'inventory_character'; Press = @('Tab') }
+    @{ Name = 'pause_menu';          Press = @('Escape'); Mouse = @(0.5, 0.5); After = @('Escape') }
+    @{ Name = 'inventory_character'; Press = @('Tab');    Mouse = @(0.25, 0.75) }
     @{ Name = 'inventory_grid';      Press = @('E') }
     @{ Name = 'inventory_build';     Press = @('E') }
     @{ Name = 'inventory_trade';     Press = @('E') }
     @{ Name = 'inventory_map';       Press = @('E');      After = @('Escape') }
     @{ Name = 'character_screen';    Press = @('K');      After = @('K') }
-    @{ Name = 'toolbar_config';      Press = @('G');      After = @('G') }
+    @{ Name = 'toolbar_config';      Press = @('G');      After = @('Escape') }
     @{ Name = 'map_screen';          Press = @('M');      After = @('Escape') }
     @{ Name = 'help';                Press = @('F1');     After = @('Escape') }
     @{ Name = 'quick_menu';          Hold = 'R' }
@@ -54,13 +59,22 @@ $steps = @(
 $summary = New-Object System.Collections.Generic.List[string]
 foreach ($step in $steps) {
     if ($step.Press) { Send-SE2Key $step.Press; Start-Sleep -Seconds 2 }
+    if ($step.Mouse) {
+        Send-SE2MouseMove -X ([int]($step.Mouse[0] * $resolution.CanvasWidth)) -Y ([int]($step.Mouse[1] * $resolution.CanvasHeight)) `
+                          -ImageWidth $resolution.Width -ImageHeight $resolution.Height
+        Start-Sleep -Milliseconds 500
+    }
     if ($step.Hold) { Set-SE2KeyState $step.Hold -Down; Start-Sleep -Milliseconds 1500 }
     $files = @(Invoke-SE2Capture -Label $step.Name)
     if ($step.Hold) { Set-SE2KeyState $step.Hold; Start-Sleep -Milliseconds 800 }
     foreach ($f in $files) { Copy-Item $f $run }
-    $uiLine = @(Get-SE2PluginLog) -match "Captured .*_$($step.Name)_ui\.png" | Select-Object -Last 1
+    $log = @(Get-SE2PluginLog)
+    $uiLine = $log -match "Captured .*_$($step.Name)_(ui|menu)\.png" | Select-Object -Last 1
     $alpha = if ($uiLine -match 'alpha: (.*)\)$') { $Matches[1] } else { 'no UI image' }
+    $viewLine = $log -match "Simulated headset view .*_$($step.Name)_left_view\.png" | Select-Object -Last 1
+    $layers = if ($viewLine -match 'left_view\.png: (.*)$') { $Matches[1] } else { 'no simulated view' }
     $summary.Add("$($step.Name): $($files.Count) files; UI $alpha")
+    $summary.Add("    left eye: $layers")
     if ($step.After) { Send-SE2Key $step.After; Start-Sleep -Milliseconds 1500 }
 }
 
