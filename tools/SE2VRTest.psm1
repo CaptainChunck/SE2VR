@@ -82,6 +82,24 @@ public static class SE2VRInput
         SendInput(1, new[] { left }, Marshal.SizeOf<INPUT>());
     }
 
+    public static void MouseLook(int dx, int dy)
+    {
+        // Relative motion in small steps, as a real mouse would send it during mouse look.
+        int steps = Math.Max(1, Math.Max(Math.Abs(dx), Math.Abs(dy)) / 20);
+        for (int i = 0; i < steps; i++)
+        {
+            var input = new INPUT { type = 0 }; input.u.mi.dx = dx / steps; input.u.mi.dy = dy / steps; input.u.mi.dwFlags = MOUSEEVENTF_MOVE;
+            SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+            Thread.Sleep(10);
+        }
+    }
+
+    public static void MouseButton(bool down)
+    {
+        var input = new INPUT { type = 0 }; input.u.mi.dwFlags = down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
+        SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+    }
+
     public static void Click(int x, int y)
     {
         SetCursorPos(x, y);
@@ -232,6 +250,22 @@ function Send-SE2MouseMove {
     [SE2VRInput]::Move($point.X, $point.Y)
 }
 
+function Set-SE2MouseButton {
+    <# Holds (-Down) or releases the left mouse button in the game window, e.g. to keep a tool firing. #>
+    param([switch]$Down)
+    $hwnd = Get-SE2Window
+    [void][SE2VRInput]::Focus($hwnd)
+    [SE2VRInput]::MouseButton([bool]$Down)
+}
+
+function Send-SE2MouseLook {
+    <# Turns the character with relative mouse motion (positive DY looks down). #>
+    param([int]$DX = 0, [int]$DY = 0)
+    $hwnd = Get-SE2Window
+    [void][SE2VRInput]::Focus($hwnd)
+    [SE2VRInput]::MouseLook($DX, $DY)
+}
+
 function Get-SE2Resolution {
     <# Render resolution and VR UI canvas size from the plugin log: @{ Width; Height; CanvasWidth; CanvasHeight }. #>
     $log = @(Get-SE2PluginLog)
@@ -288,4 +322,4 @@ function Get-SE2TestReport {
     }
 }
 
-Export-ModuleMember -Function Get-SE2GameDir, Get-SE2Window, Get-SE2PluginLog, Wait-SE2Log, Start-SE2VRTest, Send-SE2Key, Set-SE2KeyState, Send-SE2Click, Send-SE2MouseMove, Get-SE2Resolution, Invoke-SE2Capture, Stop-SE2VRTest, Get-SE2TestReport
+Export-ModuleMember -Function Get-SE2GameDir, Get-SE2Window, Get-SE2PluginLog, Wait-SE2Log, Start-SE2VRTest, Send-SE2Key, Set-SE2KeyState, Send-SE2Click, Send-SE2MouseMove, Set-SE2MouseButton, Send-SE2MouseLook, Get-SE2Resolution, Invoke-SE2Capture, Stop-SE2VRTest, Get-SE2TestReport

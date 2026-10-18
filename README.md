@@ -47,6 +47,37 @@ the game's dithering and fine detail shimmer badly in a headset. Ray tracing is 
 active (see `RaytracingInVR`), because per eye it costs about as much as the rest of the frame and its buffers would
 be needed twice.
 
+### VR rendering optimizations
+
+All of these are runtime-only changes to the renderer (no game files are touched), and each has a setting:
+
+- **Dynamic resolution** (`DynamicResolution`). The frame's GPU time is measured by the engine itself. When a frame
+  would miss the headset's budget (90% of one refresh at full rate, of two at half rate), the resolution FSR upscales
+  from goes down a little; when there is room it goes back up to the graphics preset's own resolution. FSR is made for
+  a changing input size, so this shows as a slightly softer picture instead of the judder of dropping from 45 to 30
+  fps. On an RTX 3050 with the Extreme preset it doubled the frame rate (18 to 38 fps).
+- **Foveated rendering** (`Foveation`). Variable rate shading (D3D12 tier 2: NVIDIA RTX / GTX 16, AMD RX 6000 or
+  newer) shades the lighting passes, transparents and particles at one color per 2x2 pixels towards the edges of
+  the view, around each eye's own lens center, and at 4x4 outside the area the lenses show (from the runtime's
+  visibility mask). Geometry, textures and edges stay per pixel. The engine's deferred texturing writes triangle IDs
+  in its G-buffer pass, which must stay exact, so the G-buffer is left alone.
+- **Shared eye adaptation**. The right eye uses the exposure the left eye's eye adaptation just computed. Run per
+  eye, it adapted twice as fast and left the eyes a step apart in brightness.
+- **VR post-processing** (`VrPostEffects`, `LensFlaresInVR`). Lens dirt is off (it is glued to the screen, so it moves
+  with your head), bloom runs at half resolution without its anti-flicker pass (FSR keeps it steady), and lens flares
+  are off: their ghosts are flat screen effects, and the second eye overwrote the first eye's flare occlusion results.
+
+### VR settings in the game
+
+The game's **Settings** screen gets a **VR** tab with every setting above, applied immediately and saved to
+`SE2VR.json`, plus **MODIFY UI**, **RECENTER VIEW** and **RESTORE** (back to the defaults). MODIFY UI lets you take
+parts of the HUD off the menu screen - suit status, toolbar, ship status, objectives, notifications, warnings - and
+place each one around your view, where it follows your head: left/right and up/down in degrees, distance and size.
+A part is a piece of the UI image the plugin already renders, shown by the VR compositor as its own head-locked
+panel, so it costs no extra rendering. Parts follow your head only while you play (the game hides the mouse pointer);
+when a menu is open they go back on the menu screen, except while MODIFY UI is open, when they show their last picture
+so you can place them.
+
 ## Requirements
 
 - Space Engineers 2 (tested against game version 2.4.0.95).
@@ -116,6 +147,13 @@ To play without VR, remove the launch option, or set `"Enabled": false` in `SE2V
 | `ShareWorkBetweenEyes` | `true` | Does eye-independent work (shadow refreshes, reflection probes, cloud shadows) once per frame instead of once per eye. Saves about 1.5 ms per frame in large worlds. Turn off if you ever see a shadow or reflection glitch in one eye. |
 | `FsrInVR` | `true` | Uses the game's FSR anti-aliasing and upscaling in VR (when it is selected in the game's graphics options), with a separate history per eye. `false` uses FXAA, which is a little cheaper but leaves edges and fine detail shimmering. |
 | `RaytracingInVR` | `false` | Allows ray tracing while the headset is active. It roughly doubles the GPU time and needs much more video memory. The game's own setting, used on the monitor, is not changed. |
+| `Foveation` | `Quality` | Foveated rendering: `Off`, `Quality` (coarse shading beyond 48 degrees from the lens center), `Balanced` (beyond 40) or `Performance` (beyond 32, and 4x4 beyond 50). |
+| `VrPostEffects` | `true` | No lens dirt, bloom at half resolution without its anti-flicker pass. |
+| `LensFlaresInVR` | `false` | Lens flares and lamp glare. |
+| `DynamicResolution` | `true` | Lowers the render resolution a little when a frame would be late, and raises it again when there is room. |
+| `DynamicResolutionMin` | `0.5` | Lowest render resolution dynamic resolution may use, as a fraction of the eye image. |
+| `DynamicResolutionTarget` | `Auto` | `Auto` aims for the headset's full refresh rate when the GPU nearly makes it at the preset's resolution, otherwise half (45 fps on 90 Hz, with SteamVR reprojection). `Full` or `Half` forces one. |
+| `HudPieces` | | Placement of the HUD parts that can follow your head; set it with MODIFY UI in the game's VR settings. |
 | `SystemWaitSeconds` | `15` | How long to wait at start-up for the headset to appear. |
 | `VerboseLogging` | `false` | Writes more detail to the log. |
 
@@ -185,6 +223,7 @@ without wearing the headset:
 .\tools\Run-MenuTour.ps1           # main menu: settings tabs, new game, load, workshop, credits
 .\tools\Run-ViewCheck.ps1          # loads a world (default: Quick Start Survival on a planet) and captures the 3D view
 .\tools\Run-StabilityCheck.ps1     # captures a still view several times and measures how much it flickers
+.\tools\Run-ParticleCheck.ps1      # uses the welder, grinder and drill and flies the jetpack, capturing both eyes
 .\tools\Run-StabilityCheck.ps1 -Label fxaa -Settings @{ FsrInVR = $false }   # the same with other mod settings
 ```
 

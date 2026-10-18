@@ -13,8 +13,11 @@ using Keen.VRage.Render12.Resources.BindableTextures;
 using Keen.VRage.Render12.SceneSystem.Components;
 using Keen.VRage.Render12.Utils;
 using SE2VR.OpenXR;
+using SE2VR.UI;
 using Vortice.Direct3D12;
 using Box = Vortice.Mathematics.Box;
+using Color4 = Vortice.Mathematics.Color4;
+using RawRect = Vortice.RawRect;
 using Color = Vortice.Mathematics.Color;
 
 namespace SE2VR.Rendering;
@@ -44,6 +47,15 @@ internal static unsafe class StereoRenderer
     private static readonly XrImageSwapchain?[] _eyeSwapchains = new XrImageSwapchain?[2];
     private static XrImageSwapchain? _uiSwapchain;
 
+    // HUD parts that follow your head (see HudLayout): the last gameplay picture of the UI, which the parts show, and
+    // the menu screen without those parts. Created the first time a part is taken off the menu screen.
+    private static XrImageSwapchain? _hudSwapchain;
+    private static XrImageSwapchain? _uiMainSwapchain;
+    private static bool _hudHasPicture;
+    private static bool _piecesLive;
+    private static XrCompositionLayerQuad* _pieceLayers;
+    private static readonly bool _testHudPieces = Environment.GetEnvironmentVariable("SE2VR_TEST_HUD_PIECES") == "1";
+
     private static XrCompositionLayerProjection* _projectionLayer;
     private static XrCompositionLayerProjectionView* _projectionViews;
     private static XrCompositionLayerQuad* _quadLayer; // UI panel when flat
@@ -59,6 +71,8 @@ internal static unsafe class StereoRenderer
     private static bool _loggedMenu;
     private static bool _loggedFsr;
     private static bool _loggedRaytracing;
+    private static bool _loggedPost;
+    private static bool _loggedFlares;
     private static int _framesWithoutWorld = 1_000_000;
 
     private static readonly bool _testMono = Environment.GetEnvironmentVariable("SE2VR_TEST_MONO") == "1";
@@ -95,9 +109,16 @@ internal static unsafe class StereoRenderer
     private static void DrawInternal(XrRuntime xr, bool draw, ResizableRWRenderTargetTexture finalLDRBuffer)
     {
         long frameStart = Stopwatch.GetTimestamp();
+        CpuProfile.BeginFrame();
         _frame++;
         VRConfig config = VRConfig.Current;
         SettingsManager settings = CoreSystems.Settings;
+        // Before anything asks for the render resolution (sampler LOD bias, screen buffers, FSR jitter).
+        float renderScale = DynamicResolution.Update(xr.FrameState.PredictedDisplayPeriod, stereo: _lastStereoFrame == _frame - 1);
+        if (renderScale > 0)
+        {
+            CoreSystems.GPUFrameManager.SwapChainResolutionMult = renderScale;
+        }
         if (!config.FsrInVR && settings._drs.AAMode == AAMode.FSR)
         {
             settings._drs.AAMode = AAMode.FXAA;
@@ -107,6 +128,7 @@ internal static unsafe class StereoRenderer
                 Log.Info("FSR is off in VR (FsrInVR in SE2VR.json); using FXAA while the headset is active.");
             }
         }
+        ApplyVrPostEffects(config, settings);
         if (!config.RaytracingInVR && settings._raytracing.Enabled)
         {
             // Per eye it costs about as much again as the rest of the frame, and its buffers would be needed twice.
@@ -188,9 +210,11 @@ internal static unsafe class StereoRenderer
             }
             _framesWithoutWorld = 0;
         }
+        CpuProfile.Mark("engine");
         long waitStart = Stopwatch.GetTimestamp();
         bool frameBegun = xr.BeginFrame();
         long waitTicks = Stopwatch.GetTimestamp() - waitStart;
+        CpuProfile.Mark("xrwait");
         bool shouldRender = frameBegun && xr.ShouldRender;
         bool stereo = shouldRender && sceneDraw && xr.ViewsValid;
         FrameCapture.BeginFrame();
@@ -210,6 +234,7 @@ internal static unsafe class StereoRenderer
 
         uint layerCount = 0;
         _previewLayers.Clear();
+        CpuProfile.Mark("acquire");
         if (sceneDraw)
         {
             if (stereo)
@@ -217,7 +242,9 @@ internal static unsafe class StereoRenderer
                 bool uiWanted = settings.Overrides.TopMostPass && settings.Overrides.UI;
                 DrawStereoScene();
                 bool uiDrawn = uiWanted && DrawUiLayer();
-                layerCount = BuildStereoLayers(xr, uiDrawn);
+                bool pieces = uiDrawn && PrepareHudPieces(xr);
+                CpuProfile.Mark("ui");
+                layerCount = BuildStereoLayers(xr, uiDrawn, pieces);
                 if (!_loggedStereo)
                 {
                     _loggedStereo = true;
@@ -273,13 +300,17 @@ internal static unsafe class StereoRenderer
         {
             CoreSystems.FrameDispatcher.JoinPresentQueue();
         }
+        CpuProfile.Mark("mirror");
         CoreSystems.Samplers.OnEndFrame();
         CoreSystems.FrameDispatcher.FlushQueues();
         CoreSystems.LoadingMonitor.OnEndDraw();
+        CpuProfile.Mark("submit");
 
         // Everything that writes the OpenXR images has now been submitted to the direct queue.
         ReleaseImages();
         xr.EndFrame(_layers, layerCount);
+        CpuProfile.Mark("xrend");
+        CpuProfile.EndFrame();
         FramePerf.Record(Stopwatch.GetTimestamp() - frameStart - waitTicks, waitTicks, stereo, xr.FrameState.PredictedDisplayPeriod);
         if (FrameCapture.Active)
         {
@@ -290,6 +321,42 @@ internal static unsafe class StereoRenderer
                 Layers = _previewLayers.ToArray()
             };
             FrameCapture.EndFrame(VRSystem.PluginDirectory, snapshot);
+        }
+    }
+
+    /// <summary>
+    /// Keeps the VR versions of a few post-processing settings (see <see cref="VRConfig.VrPostEffects"/> and
+    /// <see cref="VRConfig.LensFlaresInVR"/>) through the engine's own setter, so its listeners hear about the change.
+    /// The game can send new settings at any time (options, world changes); they are corrected the next frame.
+    /// </summary>
+    private static void ApplyVrPostEffects(VRConfig config, SettingsManager settings)
+    {
+        if (config.VrPostEffects)
+        {
+            PostProcessSettings post = settings._postProcess;
+            if (post.BloomDirtRatio != 0f || post.HighQualityBloom || post.BloomAntiFlickerFilter)
+            {
+                post.BloomDirtRatio = 0f;
+                post.HighQualityBloom = false;
+                post.BloomAntiFlickerFilter = false;
+                settings.SetPostProcessSettings(in post);
+                if (!_loggedPost)
+                {
+                    _loggedPost = true;
+                    Log.Info("VR post-processing: lens dirt off, bloom at half resolution without its anti-flicker pass (VrPostEffects in SE2VR.json).");
+                }
+            }
+        }
+        if (!config.LensFlaresInVR && settings._light.Flares)
+        {
+            LightSettings light = settings._light;
+            light.Flares = false;
+            settings.SetLightSettings(in light);
+            if (!_loggedFlares)
+            {
+                _loggedFlares = true;
+                Log.Info("Lens flares are off in VR (LensFlaresInVR in SE2VR.json).");
+            }
         }
     }
 
@@ -329,6 +396,9 @@ internal static unsafe class StereoRenderer
                 liveView = _eyeViews[eye];
                 settings._previousRenderView = hadHistory ? previous : _eyeViews[eye];
                 CurrentEye = eye;
+                XrFovf eyeFov = VRSystem.Xr!.Views[eye].Fov;
+                Vector2I renderSize = CoreSystems.ScreenBuffers.PreUpscaleResolution;
+                Foveation.PrepareEye(VRSystem.Xr!, eye, renderSize, in eyeFov);
                 if (eye == 0)
                 {
                     EyeHistory.BeginLeftEye();
@@ -354,6 +424,7 @@ internal static unsafe class StereoRenderer
 
                 _eyeViews[eye] = liveView; // keep what the draw updated (jitter state)
                 CopyToImage(_eyeSwapchains[eye]!, target, eye == 0 ? "VR.LeftEye" : "VR.RightEye", eye == 0 ? "left" : "right");
+                CpuProfile.Mark(eye == 0 ? "left" : "right");
             }
         }
         finally
@@ -588,10 +659,75 @@ internal static unsafe class StereoRenderer
         _eyeSwapchains[0]?.Release();
         _eyeSwapchains[1]?.Release();
         _uiSwapchain?.Release();
+        _hudSwapchain?.Release();
+        _uiMainSwapchain?.Release();
         VrCursor.ReleaseImage();
     }
 
-    private static uint BuildStereoLayers(XrRuntime xr, bool withUi)
+    /// <summary>
+    /// When HUD parts follow your head: during gameplay (the game hides the mouse pointer) copy this frame's UI into
+    /// the parts' image and into the menu screen's image with those parts cut out. With a menu open the parts go back
+    /// on the menu screen, except while Modify UI is open, when they show their last picture so they can be placed.
+    /// Returns whether the parts are shown this frame.
+    /// </summary>
+    private static bool PrepareHudPieces(XrRuntime xr)
+    {
+        _piecesLive = false;
+        if (!HudLayout.AnyFollowsHead())
+        {
+            return false;
+        }
+        bool gameplay = _testHudPieces || !VrCursor.IsPointerShowing();
+        if (!gameplay)
+        {
+            return ModifyUiEditor.IsOpen && _hudHasPicture;
+        }
+        XrImageSwapchain ui = _uiSwapchain!;
+        if (_hudSwapchain == null || _hudSwapchain.Width != ui.Width || _hudSwapchain.Height != ui.Height)
+        {
+            _hudSwapchain?.Dispose();
+            _uiMainSwapchain?.Dispose();
+            _hudSwapchain = new XrImageSwapchain(xr, "HUD", ui.Width, ui.Height);
+            _uiMainSwapchain = new XrImageSwapchain(xr, "UIMain", ui.Width, ui.Height);
+            _hudHasPicture = false;
+        }
+        if (!_hudSwapchain.Acquire() || !_uiMainSwapchain!.Acquire())
+        {
+            return false;
+        }
+        BackBuffer source = ui.Current!, hud = _hudSwapchain.Current!, main = _uiMainSwapchain.Current!;
+        var cutouts = new List<RawRect>();
+        foreach (HudLayout.Piece piece in HudLayout.Pieces)
+        {
+            if (HudLayout.SettingsFor(piece).FollowHead)
+            {
+                cutouts.Add(new RawRect((int)(piece.X0 * ui.Width), (int)(piece.Y0 * ui.Height), (int)MathF.Ceiling(piece.X1 * ui.Width), (int)MathF.Ceiling(piece.Y1 * ui.Height)));
+            }
+        }
+        using (DirectCommandList commandList = CoreSystems.FrameDispatcher.CreateDirectCommandList("VR.HudParts"))
+        {
+            // Same sequence as the engine's copy helpers (which take OpenXR images only as a destination).
+            commandList.OnAction();
+            commandList.ExplicitStateTransition(source.AutoResourceState, ResourceStates.CopySource, discardResource: false);
+            commandList.ExplicitStateTransition(hud.AutoResourceState, ResourceStates.CopyDest, discardResource: true);
+            commandList.ExplicitStateTransition(main.AutoResourceState, ResourceStates.CopyDest, discardResource: true);
+            commandList.ResolveResourceStates();
+            commandList._d3dCommandList.CopyResource(hud.D3DResource, source.D3DResource);
+            commandList._d3dCommandList.CopyResource(main.D3DResource, source.D3DResource);
+            commandList.ExplicitStateTransition(source.AutoResourceState, ResourceStates.RenderTarget, discardResource: false);
+            commandList.ExplicitStateTransition(hud.AutoResourceState, ResourceStates.RenderTarget, discardResource: false);
+            commandList.ExplicitStateTransition(main.AutoResourceState, ResourceStates.RenderTarget, discardResource: false);
+            commandList.ResolveResourceStates();
+            commandList._d3dCommandList.ClearRenderTargetView(main.D3DRTVCpuDescriptorHandle, new Color4(0f, 0f, 0f, 0f), cutouts.ToArray());
+            FrameCapture.Record(commandList, hud, "hud");
+            FrameCapture.Record(commandList, main, "uimain");
+        }
+        _hudHasPicture = true;
+        _piecesLive = true;
+        return true;
+    }
+
+    private static uint BuildStereoLayers(XrRuntime xr, bool withUi, bool withPieces)
     {
         for (int eye = 0; eye < 2; eye++)
         {
@@ -616,18 +752,102 @@ internal static unsafe class StereoRenderer
             return 1;
         }
         // The UI was drawn over transparent black, which leaves premultiplied color: blend it over the world.
-        _layers[1] = SetPanel(xr, blended: true, "ui");
-        if (!SetCursor(xr))
+        uint count = 1;
+        _layers[count++] = _piecesLive ? SetPanel(xr, blended: true, "uimain", _uiMainSwapchain!) : SetPanel(xr, blended: true, "ui", _uiSwapchain!);
+        if (withPieces)
         {
-            return 2;
+            count = AddHudPieces(xr, count);
         }
-        _layers[2] = _cursorLayer;
-        return 3;
+        if (SetCursor(xr))
+        {
+            _layers[count++] = _cursorLayer;
+        }
+        return count;
+    }
+
+    /// <summary>A quad per HUD part that follows your head, in view space, showing its part of the HUD image.</summary>
+    private static uint AddHudPieces(XrRuntime xr, uint count)
+    {
+        XrImageSwapchain hud = _hudSwapchain!;
+        XrImageSwapchain ui = _uiSwapchain!;
+        float degreesPerPixel = VRConfig.Current.UiWidthDegrees / ui.Width;
+        int index = 0;
+        foreach (HudLayout.Piece piece in HudLayout.Pieces)
+        {
+            HudPieceSettings settings = HudLayout.SettingsFor(piece);
+            if (!settings.FollowHead || count >= xr.MaxLayerCount - 1)
+            {
+                continue;
+            }
+            int x = (int)(piece.X0 * hud.Width), y = (int)(piece.Y0 * hud.Height);
+            int width = Math.Max(1, (int)MathF.Ceiling(piece.X1 * hud.Width) - x), height = Math.Max(1, (int)MathF.Ceiling(piece.Y1 * hud.Height) - y);
+            float distance = Math.Clamp(settings.Distance, 0.2f, 10f);
+            float angle = width * degreesPerPixel * Math.Clamp(settings.Size, 0.2f, 5f) * MathF.PI / 180f;
+            float quadWidth = 2f * distance * MathF.Tan(Math.Min(angle, 3f) / 2f);
+            XrPosef pose = PoseInView(settings.LeftRight, settings.UpDown, distance);
+            XrCompositionLayerQuad* layer = &_pieceLayers[index++];
+            *layer = new XrCompositionLayerQuad
+            {
+                Type = XrStructureType.CompositionLayerQuad,
+                LayerFlags = XrConst.CompositionLayerBlendTextureSourceAlpha,
+                Space = xr.ViewSpace,
+                EyeVisibility = XrConst.EyeVisibilityBoth,
+                SubImage = new XrSwapchainSubImage { Swapchain = hud.Handle, ImageRect = new XrRect2Di { OffsetX = x, OffsetY = y, Width = width, Height = height } },
+                Pose = pose,
+                Size = new XrExtent2Df { Width = quadWidth, Height = quadWidth * height / width }
+            };
+            _layers[count++] = layer;
+            if (FrameCapture.Active)
+            {
+                _previewLayers.Add(new PreviewLayer
+                {
+                    Image = "hud",
+                    Blended = true,
+                    Pose = HeadPose(xr).Compose(pose),
+                    Width = quadWidth,
+                    Height = quadWidth * height / width,
+                    U0 = (float)x / hud.Width,
+                    V0 = (float)y / hud.Height,
+                    U1 = (float)(x + width) / hud.Width,
+                    V1 = (float)(y + height) / hud.Height
+                });
+            }
+        }
+        return count;
+    }
+
+    /// <summary>A pose <paramref name="distance"/> meters ahead of the head, turned by the given angles and facing back at it.</summary>
+    private static XrPosef PoseInView(float rightDegrees, float upDegrees, float distance)
+    {
+        float yaw = rightDegrees * MathF.PI / 180f, pitch = upDegrees * MathF.PI / 180f;
+        // Facing the head: turn by -yaw around Y (up), then by pitch around X.
+        float cy = MathF.Cos(-yaw / 2f), sy = MathF.Sin(-yaw / 2f), cp = MathF.Cos(pitch / 2f), sp = MathF.Sin(pitch / 2f);
+        return new XrPosef
+        {
+            Orientation = new XrQuaternionf { X = cy * sp, Y = sy * cp, Z = -sy * sp, W = cy * cp },
+            Position = new XrVector3f
+            {
+                X = distance * MathF.Sin(yaw) * MathF.Cos(pitch),
+                Y = distance * MathF.Sin(pitch),
+                Z = -distance * MathF.Cos(yaw) * MathF.Cos(pitch)
+            }
+        };
+    }
+
+    /// <summary>Head pose in the render space, from the two eyes (for the simulated headset views of a capture).</summary>
+    private static XrPosef HeadPose(XrRuntime xr)
+    {
+        XrVector3f a = xr.Views[0].Pose.Position, b = xr.Views[1].Pose.Position;
+        return new XrPosef
+        {
+            Orientation = xr.Views[0].Pose.Orientation,
+            Position = new XrVector3f { X = (a.X + b.X) / 2f, Y = (a.Y + b.Y) / 2f, Z = (a.Z + b.Z) / 2f }
+        };
     }
 
     private static uint BuildMenuLayer(XrRuntime xr)
     {
-        _layers[0] = SetPanel(xr, blended: false, "menu"); // opaque virtual screen
+        _layers[0] = SetPanel(xr, blended: false, "menu", _uiSwapchain!); // opaque virtual screen
         if (!SetCursor(xr))
         {
             return 1;
@@ -637,9 +857,8 @@ internal static unsafe class StereoRenderer
     }
 
     /// <summary>Fills in the UI panel layer (curved or flat, see <see cref="UiPanel"/>) and returns it.</summary>
-    private static void* SetPanel(XrRuntime xr, bool blended, string imageName)
+    private static void* SetPanel(XrRuntime xr, bool blended, string imageName, XrImageSwapchain ui)
     {
-        XrImageSwapchain ui = _uiSwapchain!;
         _panel = UiPanel.FromConfig(xr, ui.Width, ui.Height);
         ulong flags = blended ? XrConst.CompositionLayerBlendTextureSourceAlpha : 0;
         if (_panel.Curved)
@@ -716,7 +935,8 @@ internal static unsafe class StereoRenderer
         _quadLayer = (XrCompositionLayerQuad*)NativeMemory.AllocZeroed((nuint)sizeof(XrCompositionLayerQuad));
         _cylinderLayer = (XrCompositionLayerCylinderKHR*)NativeMemory.AllocZeroed((nuint)sizeof(XrCompositionLayerCylinderKHR));
         _cursorLayer = (XrCompositionLayerQuad*)NativeMemory.AllocZeroed((nuint)sizeof(XrCompositionLayerQuad));
-        _layers = (void**)NativeMemory.AllocZeroed((nuint)(4 * sizeof(void*)));
+        _pieceLayers = (XrCompositionLayerQuad*)NativeMemory.AllocZeroed((nuint)(HudLayout.Pieces.Length * sizeof(XrCompositionLayerQuad)));
+        _layers = (void**)NativeMemory.AllocZeroed((nuint)((4 + HudLayout.Pieces.Length) * sizeof(void*)));
     }
 
     private static void DisposeSwapchains()
@@ -728,6 +948,11 @@ internal static unsafe class StereoRenderer
         }
         _uiSwapchain?.Dispose();
         _uiSwapchain = null;
+        _hudSwapchain?.Dispose();
+        _hudSwapchain = null;
+        _uiMainSwapchain?.Dispose();
+        _uiMainSwapchain = null;
+        _hudHasPicture = false;
     }
 
     /// <summary>Releases GPU resources. Render thread only, with the GPU idle.</summary>
@@ -740,5 +965,7 @@ internal static unsafe class StereoRenderer
             _eyeHasHistory[eye] = false;
         }
         EyeHistory.Reset();
+        Foveation.Reset();
+        DynamicResolution.Reset();
     }
 }

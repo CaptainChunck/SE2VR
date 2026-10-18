@@ -9,13 +9,27 @@
   "ShowCursor": true,
   "ForceWindowedResolution": true,
   "LockResolution": true,
+  "RecenterKey": "Home",
   "UiBiggerKey": "Ctrl+PageUp",
   "UiSmallerKey": "Ctrl+PageDown",
-  "RecenterKey": "Home",
   "CaptureKey": "Ctrl+Shift+F10",
   "ShareWorkBetweenEyes": true,
   "FsrInVR": true,
   "RaytracingInVR": false,
+  "Foveation": "Quality",
+  "VrPostEffects": true,
+  "LensFlaresInVR": false,
+  "DynamicResolution": true,
+  "DynamicResolutionMin": 0.5,
+  "DynamicResolutionTarget": "Auto",
+  "HudPieces": [
+    { "Id": "status", "FollowHead": false, "LeftRight": -20, "UpDown": -22, "Distance": 0.8, "Size": 1 },
+    { "Id": "toolbar", "FollowHead": false, "LeftRight": 0, "UpDown": -28, "Distance": 0.8, "Size": 1 },
+    { "Id": "cockpit", "FollowHead": false, "LeftRight": 20, "UpDown": -22, "Distance": 0.8, "Size": 1 },
+    { "Id": "objectives", "FollowHead": false, "LeftRight": -24, "UpDown": 12, "Distance": 0.8, "Size": 1 },
+    { "Id": "notifications", "FollowHead": false, "LeftRight": 24, "UpDown": 12, "Distance": 0.8, "Size": 1 },
+    { "Id": "warnings", "FollowHead": false, "LeftRight": -10, "UpDown": -8, "Distance": 0.8, "Size": 1 }
+  ],
   "SystemWaitSeconds": 15,
   "VerboseLogging": false
 }

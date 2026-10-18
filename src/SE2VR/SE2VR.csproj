@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <!-- Must match the runtime the game ships with (see SpaceEngineers2.runtimeconfig.json). -->
@@ -10,7 +10,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>SE2VR</AssemblyName>
     <RootNamespace>SE2VR</RootNamespace>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <!-- Plugin: copy NuGet dependencies (0Harmony.dll) next to the output, but not the game's own assemblies. -->
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
@@ -33,6 +33,10 @@
     <Reference Include="VRage.Render12" HintPath="$(SE2GameDir)\VRage.Render12.dll" Private="false" />
     <Reference Include="VRage.UI" HintPath="$(SE2GameDir)\VRage.UI.dll" Private="false" />
     <Reference Include="Game2.Client" HintPath="$(SE2GameDir)\Game2.Client.dll" Private="false" />
+    <!-- The game's own Avalonia (UI) build, for the VR settings tab. -->
+    <Reference Include="Avalonia.Base" HintPath="$(SE2GameDir)\Avalonia.Base.dll" Private="false" />
+    <Reference Include="Avalonia.Controls" HintPath="$(SE2GameDir)\Avalonia.Controls.dll" Private="false" />
+    <Reference Include="VRage.UI.Shared" HintPath="$(SE2GameDir)\VRage.UI.Shared.dll" Private="false" />
     <Reference Include="Vortice.Direct3D12" HintPath="$(SE2GameDir)\Vortice.Direct3D12.dll" Private="false" />
     <Reference Include="Vortice.DXGI" HintPath="$(SE2GameDir)\Vortice.DXGI.dll" Private="false" />
     <Reference Include="Vortice.DirectX" HintPath="$(SE2GameDir)\Vortice.DirectX.dll" Private="false" />

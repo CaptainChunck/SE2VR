@@ -37,7 +37,15 @@ In the game
 - Menus work with the mouse; its pointer is shown on the floating panel. Keep the game window focused.
 - The game window on your monitor mirrors one eye.
 
-Settings (edit %LOCALAPPDATA%\SE2VR\SE2VR.json with Notepad while the game is closed)
+VR settings in the game
+- Settings has a VR tab: render resolution, dynamic resolution, foveated rendering, FSR, ray tracing in VR, post
+  effects, world scale, menu screen size and distance. Changes apply right away and are saved.
+- MODIFY UI (top of the VR tab) takes parts of the HUD off the menu screen and places them around your view, where
+  they follow your head: suit status, toolbar, ship status, objectives, notifications, warnings. Open it from the
+  in-game menu (Esc): while it is open the headset shows each part where it will be.
+- RESTORE puts the VR settings and the HUD layout back to their defaults.
+
+Settings file (%LOCALAPPDATA%\SE2VR\SE2VR.json, edit with Notepad while the game is closed)
 - RenderScale (0.75): resolution per eye. Lower it if the game stutters, raise it for a sharper image.
 - UiWidthDegrees (70): size of the floating panel (also Ctrl+PageUp / Ctrl+PageDown in the game).
 - UiDistance (1.6): distance of the panel in meters.

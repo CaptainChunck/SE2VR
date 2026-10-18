@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -70,6 +71,37 @@ internal sealed class VRConfig
     /// memory, so it is off in VR by default; the game's own setting (used on the monitor) is not changed.
     /// </summary>
     public bool RaytracingInVR { get; set; }
+
+    /// <summary>
+    /// Foveated rendering: lighting, transparents and particles are shaded at a lower rate towards the edges of the view,
+    /// where the lenses blur anyway. "Off", "Quality", "Balanced" or "Performance". Needs a GPU with variable rate shading
+    /// tier 2 (NVIDIA RTX / GTX 16, AMD RX 6000 or newer); ignored otherwise.
+    /// </summary>
+    public string Foveation { get; set; } = "Quality";
+
+    /// <summary>
+    /// VR-friendly post-processing: no lens dirt (it is glued to the screen, so it moves with your head), bloom at half
+    /// resolution and without its anti-flicker pass (FSR already keeps it steady).
+    /// </summary>
+    public bool VrPostEffects { get; set; } = true;
+
+    /// <summary>Lens flares and lamp glare. Their ghosts are flat screen effects that look wrong in a headset; off by default.</summary>
+    public bool LensFlaresInVR { get; set; }
+
+    /// <summary>
+    /// Lowers the render resolution (before FSR upscaling) a little at a time when a frame would miss the headset's
+    /// refresh, and raises it again when there is room, so the frame rate stays steady instead of dropping.
+    /// </summary>
+    public bool DynamicResolution { get; set; } = true;
+
+    /// <summary>Lowest render resolution dynamic resolution may use, as a fraction of the eye image size.</summary>
+    public float DynamicResolutionMin { get; set; } = 0.5f;
+
+    /// <summary>"Auto": the headset's full refresh rate when the GPU nearly makes it, otherwise half (e.g. 45 fps on 90 Hz). "Full" or "Half" forces one.</summary>
+    public string DynamicResolutionTarget { get; set; } = "Auto";
+
+    /// <summary>Placement of the HUD pieces that can follow your head (set in the game's VR settings, MODIFY UI).</summary>
+    public List<SE2VR.UI.HudPieceSettings> HudPieces { get; set; } = SE2VR.UI.HudLayout.DefaultSettings();
 
     /// <summary>How long to wait at start-up for SteamVR to report the headset before giving up.</summary>
     public float SystemWaitSeconds { get; set; } = 15f;
@@ -145,6 +177,44 @@ internal sealed class VRConfig
                 }
             }
         });
+    }
+
+    private static System.Threading.Timer? _saveTimer;
+
+    /// <summary>Saves a second after the last change (a slider being dragged changes the settings many times).</summary>
+    public static void SaveSoon()
+    {
+        lock (_saveLock)
+        {
+            _saveTimer ??= new System.Threading.Timer(_ => SaveInBackground());
+            _saveTimer.Change(1000, System.Threading.Timeout.Infinite);
+        }
+    }
+
+    /// <summary>Puts every setting shown in the game's VR tab (and the HUD layout) back to its default; keys stay as they are.</summary>
+    public static void RestoreDefaults()
+    {
+        VRConfig defaults = new();
+        VRConfig current = Current;
+        current.RenderScale = defaults.RenderScale;
+        current.WorldScale = defaults.WorldScale;
+        current.UiDistance = defaults.UiDistance;
+        current.UiWidthDegrees = defaults.UiWidthDegrees;
+        current.UiCurved = defaults.UiCurved;
+        current.ShowCursor = defaults.ShowCursor;
+        current.ShareWorkBetweenEyes = defaults.ShareWorkBetweenEyes;
+        current.FsrInVR = defaults.FsrInVR;
+        current.RaytracingInVR = defaults.RaytracingInVR;
+        current.Foveation = defaults.Foveation;
+        current.VrPostEffects = defaults.VrPostEffects;
+        current.LensFlaresInVR = defaults.LensFlaresInVR;
+        current.DynamicResolution = defaults.DynamicResolution;
+        current.DynamicResolutionMin = defaults.DynamicResolutionMin;
+        current.DynamicResolutionTarget = defaults.DynamicResolutionTarget;
+        foreach (SE2VR.UI.HudLayout.Piece piece in SE2VR.UI.HudLayout.Pieces)
+        {
+            SE2VR.UI.HudLayout.Reset(piece);
+        }
     }
 
     /// <summary>Rewrites the file when settings added by a newer version are missing, so they become discoverable.</summary>

@@ -75,6 +75,29 @@ internal enum XrStructureType : int
     GraphicsBindingD3D12KHR = 1000028000,
     SwapchainImageD3D12KHR = 1000028001,
     GraphicsRequirementsD3D12KHR = 1000028002,
+    VisibilityMaskKHR = 1000031000,
+    EventDataVisibilityMaskChangedKHR = 1000031001,
+}
+
+/// <summary>XR_KHR_visibility_mask: the part of each eye's image the lenses show, in tangent space (directions (x, y, -1)).</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct XrVisibilityMaskKHR
+{
+    public XrStructureType Type;
+    public void* Next;
+    public uint VertexCapacityInput;
+    public uint VertexCountOutput;
+    public XrVector2f* Vertices;
+    public uint IndexCapacityInput;
+    public uint IndexCountOutput;
+    public uint* Indices;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct XrVector2f
+{
+    public float X;
+    public float Y;
 }
 
 internal enum XrSessionState : int
@@ -124,6 +147,9 @@ internal static class XrConst
 
     public const string KhrD3D12EnableExtension = "XR_KHR_D3D12_enable";
     public const string KhrCompositionLayerCylinderExtension = "XR_KHR_composition_layer_cylinder";
+    public const string KhrVisibilityMaskExtension = "XR_KHR_visibility_mask";
+
+    public const int VisibilityMaskTypeLineLoop = 3;
 
     public static ulong MakeVersion(ulong major, ulong minor, ulong patch) =>
         ((major & 0xffff) << 48) | ((minor & 0xffff) << 32) | (patch & 0xffffffff);

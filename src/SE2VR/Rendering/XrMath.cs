@@ -10,6 +10,38 @@ namespace SE2VR.Rendering;
 /// </summary>
 internal static class XrMath
 {
+    /// <summary>The pose <paramref name="child"/> (given relative to <paramref name="parent"/>) in the parent's space.</summary>
+    public static XrPosef Compose(this XrPosef parent, in XrPosef child)
+    {
+        XrQuaternionf q = parent.Orientation, c = child.Orientation;
+        return new XrPosef
+        {
+            Orientation = new XrQuaternionf
+            {
+                W = q.W * c.W - q.X * c.X - q.Y * c.Y - q.Z * c.Z,
+                X = q.W * c.X + q.X * c.W + q.Y * c.Z - q.Z * c.Y,
+                Y = q.W * c.Y - q.X * c.Z + q.Y * c.W + q.Z * c.X,
+                Z = q.W * c.Z + q.X * c.Y - q.Y * c.X + q.Z * c.W
+            },
+            Position = Add(parent.Position, Rotate(q, child.Position))
+        };
+    }
+
+    /// <summary>v rotated by the unit quaternion q.</summary>
+    public static XrVector3f Rotate(in XrQuaternionf q, in XrVector3f v)
+    {
+        // t = 2 * cross(q.xyz, v); v' = v + w * t + cross(q.xyz, t)
+        float tx = 2f * (q.Y * v.Z - q.Z * v.Y), ty = 2f * (q.Z * v.X - q.X * v.Z), tz = 2f * (q.X * v.Y - q.Y * v.X);
+        return new XrVector3f
+        {
+            X = v.X + q.W * tx + (q.Y * tz - q.Z * ty),
+            Y = v.Y + q.W * ty + (q.Z * tx - q.X * tz),
+            Z = v.Z + q.W * tz + (q.X * ty - q.Y * tx)
+        };
+    }
+
+    private static XrVector3f Add(in XrVector3f a, in XrVector3f b) => new() { X = a.X + b.X, Y = a.Y + b.Y, Z = a.Z + b.Z };
+
     /// <summary>Local-to-parent transform of a pose; the translation is multiplied by <paramref name="translationScale"/>.</summary>
     public static MatrixD ToMatrixD(in XrPosef pose, double translationScale)
     {

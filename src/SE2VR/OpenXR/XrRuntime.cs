@@ -36,6 +36,52 @@ internal sealed unsafe class XrRuntime : IDisposable
     /// <summary>XR_KHR_composition_layer_cylinder is enabled: the UI panel can be curved.</summary>
     public bool SupportsCylinder { get; private set; }
 
+    /// <summary>Changes whenever the runtime says the lens visibility masks changed (re-read them then).</summary>
+    public int VisibilityMaskVersion { get; private set; }
+
+    /// <summary>
+    /// The outline of the part of an eye's image the lenses show (XR_KHR_visibility_mask line loop), in tangent space:
+    /// each point is the direction (x, y, -1) in view space, y up. Null when the runtime offers no mask.
+    /// </summary>
+    public XrVector2f[]? GetVisibleOutline(int eye)
+    {
+        if (Api.GetVisibilityMaskKHR == null || Session == 0)
+        {
+            return null;
+        }
+        XrVisibilityMaskKHR mask = new() { Type = XrStructureType.VisibilityMaskKHR };
+        if (Api.GetVisibilityMaskKHR(Session, XrConst.ViewConfigurationPrimaryStereo, (uint)eye, XrConst.VisibilityMaskTypeLineLoop, &mask) < 0 ||
+            mask.VertexCountOutput < 3)
+        {
+            return null;
+        }
+        var vertices = new XrVector2f[mask.VertexCountOutput];
+        var indices = new uint[mask.IndexCountOutput];
+        fixed (XrVector2f* pVertices = vertices)
+        fixed (uint* pIndices = indices)
+        {
+            mask.VertexCapacityInput = (uint)vertices.Length;
+            mask.Vertices = pVertices;
+            mask.IndexCapacityInput = (uint)indices.Length;
+            mask.Indices = indices.Length > 0 ? pIndices : null;
+            if (Api.GetVisibilityMaskKHR(Session, XrConst.ViewConfigurationPrimaryStereo, (uint)eye, XrConst.VisibilityMaskTypeLineLoop, &mask) < 0)
+            {
+                return null;
+            }
+        }
+        // A line loop lists its points in order through the indices.
+        if (indices.Length >= 3)
+        {
+            var ordered = new XrVector2f[indices.Length];
+            for (int i = 0; i < indices.Length; i++)
+            {
+                ordered[i] = vertices[indices[i] < vertices.Length ? indices[i] : 0];
+            }
+            return ordered;
+        }
+        return vertices;
+    }
+
     public XrSessionState State { get; private set; } = XrSessionState.Unknown;
 
     /// <summary>xrBeginSession succeeded and xrEndSession has not been called yet: frames must be submitted.</summary>
@@ -123,6 +169,10 @@ internal sealed unsafe class XrRuntime : IDisposable
         {
             enabled.Add(XrConst.KhrCompositionLayerCylinderExtension);
         }
+        if (available.Contains(XrConst.KhrVisibilityMaskExtension))
+        {
+            enabled.Add(XrConst.KhrVisibilityMaskExtension);
+        }
 
         XrInstanceCreateInfo info = new() { Type = XrStructureType.InstanceCreateInfo };
         WriteUtf8(info.ApplicationInfo.ApplicationName, 128, "Space Engineers 2 VR");
@@ -151,6 +201,10 @@ internal sealed unsafe class XrRuntime : IDisposable
         SupportsCylinder = enabled.Contains(XrConst.KhrCompositionLayerCylinderExtension);
         Log.Info($"Curved UI panel (cylinder layers): {(SupportsCylinder ? "supported" : "not supported by this runtime, using a flat panel")}");
         Api.LoadInstanceFunctions(Instance);
+        if (enabled.Contains(XrConst.KhrVisibilityMaskExtension))
+        {
+            Api.GetVisibilityMaskKHR = (delegate* unmanaged<ulong, int, uint, int, XrVisibilityMaskKHR*, XrResult>)Api.TryGet(Instance, "xrGetVisibilityMaskKHR");
+        }
 
         XrInstanceProperties props = new() { Type = XrStructureType.InstanceProperties };
         if (Api.GetInstanceProperties(Instance, &props) >= 0)
@@ -297,6 +351,10 @@ internal sealed unsafe class XrRuntime : IDisposable
                     break;
                 case XrStructureType.EventDataEventsLost:
                     Log.Warn("OpenXR events lost.");
+                    VisibilityMaskVersion++;
+                    break;
+                case XrStructureType.EventDataVisibilityMaskChangedKHR:
+                    VisibilityMaskVersion++;
                     break;
             }
         }

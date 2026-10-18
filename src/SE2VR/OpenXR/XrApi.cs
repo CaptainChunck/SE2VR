@@ -48,6 +48,8 @@ internal sealed unsafe class XrApi
     public delegate* unmanaged<ulong, XrFrameEndInfo*, XrResult> EndFrame;
     public delegate* unmanaged<ulong, XrViewLocateInfo*, XrViewState*, uint, uint*, XrView*, XrResult> LocateViews;
     public delegate* unmanaged<ulong, XrEventDataBuffer*, XrResult> PollEvent;
+    /// <summary>XR_KHR_visibility_mask; null when the extension is not enabled.</summary>
+    public delegate* unmanaged<ulong, int, uint, int, XrVisibilityMaskKHR*, XrResult> GetVisibilityMaskKHR;
 
     /// <summary>Where the entry points came from, for the log.</summary>
     public string Source { get; private set; } = "";
@@ -107,6 +109,19 @@ internal sealed unsafe class XrApi
         EndFrame = (delegate* unmanaged<ulong, XrFrameEndInfo*, XrResult>)Get(instance, "xrEndFrame");
         LocateViews = (delegate* unmanaged<ulong, XrViewLocateInfo*, XrViewState*, uint, uint*, XrView*, XrResult>)Get(instance, "xrLocateViews");
         PollEvent = (delegate* unmanaged<ulong, XrEventDataBuffer*, XrResult>)Get(instance, "xrPollEvent");
+    }
+
+    /// <summary>Resolves an extension function, or returns 0 when the runtime does not offer it.</summary>
+    public nint TryGet(ulong instance, string name)
+    {
+        try
+        {
+            return Get(instance, name);
+        }
+        catch (XrException)
+        {
+            return 0;
+        }
     }
 
     private nint Get(ulong instance, string name)

@@ -36,6 +36,13 @@ internal static unsafe class VrCursor
     /// Mouse position on the UI canvas (0..1 from its top-left corner) while Windows shows the pointer over the focused
     /// game window. The canvas is the top-left part of the window (see <see cref="UiCanvas"/>).
     /// </summary>
+    /// <summary>True while Windows shows the mouse pointer: the game shows it with menus and hides it during play (mouse look).</summary>
+    public static bool IsPointerShowing()
+    {
+        CursorInfo info = new() { Size = sizeof(CursorInfo) };
+        return GetCursorInfo(ref info) && (info.Flags & CursorShowing) != 0 && info.Cursor != 0;
+    }
+
     public static bool TryGetCanvasPosition(Vector2I window, Vector2I canvas, out float u, out float v)
     {
         u = v = 0f;

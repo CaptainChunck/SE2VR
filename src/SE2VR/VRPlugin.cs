@@ -53,10 +53,17 @@ public sealed class VRPlugin : IPlugin, IDisposable
         Patch(typeof(UiCanvasPatch.Initialize));
         Patch(typeof(UiCanvasPatch.DisplaySettingsChanged));
         Patch(typeof(HudProjectionPatch));
+        Patch(typeof(FoveationPatch));
+        Patch(typeof(SharedExposurePatch));
+        Patch(typeof(SE2VR.UI.VrSettingsTab));
         if (Rendering.GpuProfile.Enabled)
         {
             Patch(typeof(Rendering.GpuProfilePatch));
             Patch(typeof(Rendering.GpuProfilePassPatch));
+        }
+        if (Rendering.CpuProfile.Enabled)
+        {
+            Patch(typeof(Rendering.CpuProfilePassPatch));
         }
         host.OnBeforeEngineInstantiated += OnBeforeEngineInstantiated;
     }

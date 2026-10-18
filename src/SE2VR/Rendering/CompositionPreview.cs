@@ -25,6 +25,12 @@ internal sealed class PreviewLayer
     public float CentralAngle { get; init; }
     public float AspectRatio { get; init; }
 
+    /// <summary>Part of the image shown on the layer (the swapchain sub-image rectangle), as fractions of the image.</summary>
+    public float U0 { get; init; }
+    public float V0 { get; init; }
+    public float U1 { get; init; } = 1f;
+    public float V1 { get; init; } = 1f;
+
     public bool IsCylinder => Radius > 0f;
 }
 
@@ -96,7 +102,9 @@ internal static class CompositionPreview
                     }
                     covered[l]++;
                     bounds[l] = (Math.Min(bounds[l].MinX, px), Math.Max(bounds[l].MaxX, px), Math.Min(bounds[l].MinY, py), Math.Max(bounds[l].MaxY, py));
-                    int s = ((int)(v * image.Height) * image.Width + (int)(u * image.Width)) * 4;
+                    u = layer.U0 + u * (layer.U1 - layer.U0);
+                    v = layer.V0 + v * (layer.V1 - layer.V0);
+                    int s = (Math.Min((int)(v * image.Height), image.Height - 1) * image.Width + Math.Min((int)(u * image.Width), image.Width - 1)) * 4;
                     if (layer.Blended)
                     {
                         // Premultiplied "over", as the compositor does with BLEND_TEXTURE_SOURCE_ALPHA.

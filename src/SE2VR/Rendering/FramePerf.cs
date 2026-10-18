@@ -54,9 +54,12 @@ internal static class FramePerf
         }
         double headsetHz = displayPeriodNs > 0 ? 1e9 / displayPeriodNs : 0;
         string memory = _memoryBudget > 0 ? $", video memory {_memoryUsage / GB:0.0} of {_memoryBudget / GB:0.0} GB" : "";
+        string resolution = DynamicResolution.CurrentScale > 0
+            ? $", GPU {DynamicResolution.LastGpuMs:0.0} ms of {DynamicResolution.TargetMs:0.0}, render {DynamicResolution.CurrentScale * 100:0}%"
+            : "";
         Log.Info($"Perf: {_frames / seconds:0.0} fps (headset {headsetHz:0} Hz, {100.0 * _stereoFrames / _frames:0}% stereo), " +
                  $"draw {_drawMs / _frames:0.0} ms avg / {_maxDrawMs:0.0} ms max, wait {_waitMs / _frames:0.0} ms avg, " +
-                 $"worst frame interval {_maxIntervalMs:0.0} ms{memory}");
+                 $"worst frame interval {_maxIntervalMs:0.0} ms{memory}{resolution}");
         if (_memoryBudget > 0 && _memoryUsage > _memoryBudget &&
             (_lastMemoryWarning == 0 || Stopwatch.GetElapsedTime(_lastMemoryWarning).TotalSeconds >= WarnEverySeconds))
         {
