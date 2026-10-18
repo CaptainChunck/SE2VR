@@ -37,12 +37,9 @@ internal static unsafe class StereoRenderer
     private static readonly RenderView[] _eyeViews = new RenderView[2];
     private static readonly bool[] _eyeHasHistory = new bool[2];
 
-    /// <summary>
-    /// View of the most recent scene draw (either eye). The engine's temporal effects (clouds, water, stochastic
-    /// transparency, GI) keep one ping-pong history that flips on every draw, so the history in the buffer always comes
-    /// from the previous draw - the other eye. Reporting that view as "previous" makes their reprojection match it.
-    /// </summary>
-    private static RenderView? _lastDrawnView;
+    /// <summary>Frame counter of the stereo renderer and the last frame both eyes were drawn (for temporal history).</summary>
+    private static long _frame;
+    private static long _lastStereoFrame = -10;
 
     private static readonly XrImageSwapchain?[] _eyeSwapchains = new XrImageSwapchain?[2];
     private static XrImageSwapchain? _uiSwapchain;
@@ -97,6 +94,7 @@ internal static unsafe class StereoRenderer
     private static void DrawInternal(XrRuntime xr, bool draw, ResizableRWRenderTargetTexture finalLDRBuffer)
     {
         long frameStart = Stopwatch.GetTimestamp();
+        _frame++;
         VRConfig config = VRConfig.Current;
         SettingsManager settings = CoreSystems.Settings;
         if (config.DisableFsr && settings._drs.AAMode == AAMode.FSR)
@@ -304,18 +302,26 @@ internal static unsafe class StereoRenderer
         RenderView centerPrevious = settings._previousRenderView;
         OverridesSettings overrides = settings._overrides;
         settings._overrides.UI = false; // The UI goes to its own layer, see DrawUiLayer.
-        if (!center.LastUpdateWasSmooth)
-        {
-            _lastDrawnView = null; // camera cut (respawn, teleport): don't reproject history across it
-        }
+        // Each eye reprojects its own last frame (see EyeHistory). Not across a camera cut (respawn, teleport) or a gap
+        // in stereo rendering (menus, headset off).
+        bool continuous = center.LastUpdateWasSmooth && _lastStereoFrame == _frame - 1;
+        _lastStereoFrame = _frame;
+        bool rightEyeHistory = false;
         try
         {
             for (int eye = 0; eye < 2; eye++)
             {
+                RenderView previous = _eyeViews[eye];
+                bool hadHistory = _eyeHasHistory[eye] && continuous;
                 BuildEyeView(eye, in center);
                 liveView = _eyeViews[eye];
-                settings._previousRenderView = _lastDrawnView ?? _eyeViews[eye];
+                settings._previousRenderView = hadHistory ? previous : _eyeViews[eye];
                 CurrentEye = eye;
+                if (eye == 1)
+                {
+                    rightEyeHistory = true;
+                    EyeHistory.BeginRightEye();
+                }
 
                 settings.OnBeginDraw();
                 CoreSystems.CommonResources.OnBeginDraw();
@@ -331,12 +337,15 @@ internal static unsafe class StereoRenderer
                 settings.OnEndDraw();
 
                 _eyeViews[eye] = liveView; // keep what the draw updated (jitter state)
-                _lastDrawnView = liveView;
                 CopyToImage(_eyeSwapchains[eye]!, target, eye == 0 ? "VR.LeftEye" : "VR.RightEye", eye == 0 ? "left" : "right");
             }
         }
         finally
         {
+            if (rightEyeHistory)
+            {
+                EyeHistory.EndRightEye();
+            }
             CurrentEye = -1;
             settings._overrides = overrides;
             liveView = center;
@@ -713,6 +722,6 @@ internal static unsafe class StereoRenderer
         {
             _eyeHasHistory[eye] = false;
         }
-        _lastDrawnView = null;
+        EyeHistory.Reset();
     }
 }

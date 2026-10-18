@@ -19,7 +19,9 @@ renders with DirectX 12, so a plugin can work directly with the renderer:
 3. **Frames.** Each frame replaces `Render12EngineComponent.Draw`, using a Harmony prefix:
    - `xrWaitFrame` paces the game to the headset, and `xrLocateViews` provides the head pose.
    - The scene is drawn **twice, once per eye, in the same frame**. Each eye gets the game camera with the tracked eye
-     pose applied on top, its own asymmetric projection, and its own temporal history.
+     pose applied on top, its own asymmetric projection, and its own temporal history: the engine's temporal effects
+     (clouds, water, stochastic transparency, raytraced GI) reproject last frame's result with the current
+     projection, so the right eye gets a second set of history buffers, swapped in around its draw.
    - Each eye's result is copied into an OpenXR swapchain image. Those images are wrapped in the engine's own
      `BackBuffer` type, so the renderer's resource-state tracking handles the barriers.
    - The game UI (menus and HUD) is rendered once into a separate image and shown as a **floating panel** in front
@@ -148,8 +150,7 @@ timings.
   they drift a little when you lean far to the side. On a curved panel they are exact only near its center. The
   colonization map screen has not been checked in VR yet.
 - Cockpits and ship flight have not been checked in VR yet.
-- Screen-space effects (SSR, ambient occlusion, clouds) keep one history shared by both eyes. They may shimmer
-  slightly.
+- Screen-space reflections keep one history shared by both eyes and may shimmer slightly.
 - Water splash particles still simulate once per eye.
 - Minimizing the game window stops scene rendering.
 - Game updates can rename or change the renderer internals this plugin patches. When that happens, the plugin logs the
@@ -170,6 +171,7 @@ without wearing the headset:
 .\tools\Run-UiTour.ps1             # loads the built-in Empty World and opens every main in-game screen
 .\tools\Run-UiTour.ps1 -World CRF  # the same in the Creative world (Concordia Research Facility)
 .\tools\Run-MenuTour.ps1           # main menu: settings tabs, new game, load, workshop, credits
+.\tools\Run-ViewCheck.ps1          # loads a world (default: Quick Start Survival on a planet) and captures the 3D view
 ```
 
 Each run writes the eye images, the UI panel and a simulated headset view per eye (with the panel and pointer
