@@ -1,0 +1,14 @@
+﻿{
+  "Enabled": true,
+  "RenderScale": 0.75,
+  "WorldScale": 1.0,
+  "UiDistance": 1.6,
+  "UiWidth": 1.6,
+  "ForceWindowedResolution": true,
+  "LockResolution": true,
+  "RecenterKey": "Home",
+  "CaptureKey": "Ctrl+Shift+F9",
+  "DisableFsr": true,
+  "SystemWaitSeconds": 15,
+  "VerboseLogging": false
+}

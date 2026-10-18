@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    Location of the Space Engineers 2 "Game2" folder (the one containing SpaceEngineers2.exe).
+    Override with an environment variable SE2_GAME_DIR or with: dotnet build /p:SE2GameDir="D:\Games\SpaceEngineers2\Game2"
+  -->
+  <PropertyGroup>
+    <SE2GameDir Condition="'$(SE2GameDir)' == '' and '$(SE2_GAME_DIR)' != ''">$(SE2_GAME_DIR)</SE2GameDir>
+    <SE2GameDir Condition="'$(SE2GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers2\Game2</SE2GameDir>
+  </PropertyGroup>
+</Project>
