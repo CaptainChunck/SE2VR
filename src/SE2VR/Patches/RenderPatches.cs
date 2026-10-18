@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
+using Keen.VRage.Render12.Core.Systems;
 using Keen.VRage.Render12.EngineComponents;
+using Keen.VRage.Render12.LightingStage;
 using Keen.VRage.Render12.Resources.BindableTextures;
 using Keen.VRage.Render12.Resources.PipelineStates;
 using Keen.VRage.Render12.TransparentStage;
@@ -85,6 +87,27 @@ internal static class SlugAlphaPatch
 internal static class DisposePatch
 {
     private static void Prefix() => VRSystem.ShutdownRenderer();
+}
+
+/// <summary>
+/// Eye-independent work is done once per frame and reused for the right eye. The engine schedules some of it per scene
+/// draw - sun shadow cascades are refreshed a few at a time, reflection probes face by face - so with two draws per
+/// frame it ran twice as often as on the monitor. The cascade and character shadow volumes are fitted around the
+/// camera with a frustum of the same size for both eyes (only 6 cm apart), and probes and cloud shadow maps are
+/// world-space, so the left eye's results serve both. Skipped methods return an empty list of updates.
+/// </summary>
+[HarmonyPatch]
+internal static class SharedWorkPatches
+{
+    private static IEnumerable<MethodBase> TargetMethods()
+    {
+        yield return AccessTools.Method(typeof(CascadeShadowsContext), nameof(CascadeShadowsContext.FlushUpdates));
+        yield return AccessTools.Method(typeof(CharacterShadowsContext), nameof(CharacterShadowsContext.FlushUpdates));
+        yield return AccessTools.Method(typeof(EnvironmentProbeManager), nameof(EnvironmentProbeManager.PrepareProbes));
+        yield return AccessTools.Method(typeof(SceneDrawSystem), "ComputeCloudShadows");
+    }
+
+    private static bool Prefix() => StereoRenderer.CurrentEye != 1 || !VRConfig.Current.ShareWorkBetweenEyes;
 }
 
 /// <summary>

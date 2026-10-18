@@ -53,6 +53,12 @@ internal sealed class VRConfig
     /// <summary>Key that saves the images sent to the headset as PNGs in the "captures" folder. Empty disables it.</summary>
     public string CaptureKey { get; set; } = "Ctrl+Shift+F10";
 
+    /// <summary>
+    /// Do eye-independent work (sun and character shadow refreshes, reflection probes, cloud shadows) once per frame
+    /// instead of once per eye. Turn off if you ever see shadow or reflection glitches in one eye.
+    /// </summary>
+    public bool ShareWorkBetweenEyes { get; set; } = true;
+
     /// <summary>FSR keeps one temporal history, which both eyes would share and smear. Falls back to FXAA in VR.</summary>
     public bool DisableFsr { get; set; } = true;
 

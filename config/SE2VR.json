@@ -13,6 +13,7 @@
   "UiSmallerKey": "Ctrl+PageDown",
   "RecenterKey": "Home",
   "CaptureKey": "Ctrl+Shift+F10",
+  "ShareWorkBetweenEyes": true,
   "DisableFsr": true,
   "SystemWaitSeconds": 15,
   "VerboseLogging": false

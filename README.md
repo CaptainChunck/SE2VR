@@ -27,7 +27,9 @@ renders with DirectX 12, so a plugin can work directly with the renderer:
    - The game UI (menus and HUD) is rendered once into a separate image and shown as a **floating panel** in front
      of you (an OpenXR quad layer, or a curved cylinder layer where the runtime supports it). It is not burned into
      both eyes.
-   - GPU particles are simulated once per frame. The right eye reuses the left eye's simulation.
+   - Eye-independent work is done once per frame: GPU particle simulation, sun and character shadow refreshes,
+     reflection probe updates and planet cloud shadows. The engine schedules some of these per scene draw, so drawing
+     two eyes would otherwise run them twice as often as on the monitor.
 4. **UI layout.** The VR window is nearly square, like the eye images, which would stretch the game's UI over a tall
    1920x1920 canvas. The plugin tells the UI the screen is 16:9 instead (the top part of the window), so menus and the
    HUD keep the layout they were designed for and the panel can be made wide enough to read. Mouse input needs no
@@ -107,6 +109,7 @@ To play without VR, remove the launch option, or set `"Enabled": false` in `SE2V
 | `UiBiggerKey` / `UiSmallerKey` | `Ctrl+PageUp` / `Ctrl+PageDown` | Make the panel 5 degrees wider or narrower while playing. The new size is saved to `UiWidthDegrees`. |
 | `RecenterKey` | `Home` | Makes your current head position and heading the new "forward". Accepts names like `Home`, `F8` or `Ctrl+R`. Empty disables it. |
 | `CaptureKey` | `Ctrl+Shift+F10` | Saves the images sent to the headset (both eyes and the UI panel) as PNGs in the `captures` folder. |
+| `ShareWorkBetweenEyes` | `true` | Does eye-independent work (shadow refreshes, reflection probes, cloud shadows) once per frame instead of once per eye. Saves about 1.5 ms per frame in large worlds. Turn off if you ever see a shadow or reflection glitch in one eye. |
 | `DisableFsr` | `true` | Uses FXAA instead of FSR while in VR. |
 | `SystemWaitSeconds` | `15` | How long to wait at start-up for the headset to appear. |
 | `VerboseLogging` | `false` | Writes more detail to the log. |
@@ -137,9 +140,13 @@ resolution. Measured on an RTX 3050 with a VIVE Pro 2 (90 Hz), RenderScale 0.75 
 | Empty World | ~89 fps | ~9 ms |
 | Creative, Concordia Research Facility (large grids) | ~45 fps (SteamVR reprojects to 90 Hz) | ~21 ms |
 
+Doing eye-independent work once per frame (`ShareWorkBetweenEyes`) cut the GPU time in the Creative world by about
+1.5 ms per frame (to about 11 ms of GPU work), measured A/B in one session.
+
 To make it smoother, lower `RenderScale` (0.6 draws about a third fewer pixels than 0.75), the game's graphics preset,
 or SteamVR's per-application resolution. The log writes a `Perf:` line every 10 seconds with the frame rate and
-timings.
+timings. For a per-pass GPU breakdown, start the game with the environment variable `SE2VR_GPU_PROFILE=1` (add
+`SE2VR_GPU_PROFILE_AB=1` to flip `ShareWorkBetweenEyes` every 10 seconds for a same-session comparison).
 
 ## Known limitations
 

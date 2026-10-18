@@ -45,12 +45,18 @@ public sealed class VRPlugin : IPlugin, IDisposable
             return;
         }
         Patch(typeof(ParticlePatches));
+        Patch(typeof(SharedWorkPatches));
         Patch(typeof(DisplayOptionsPatch));
         Patch(typeof(KeepSavedDisplayOptionsPatch));
         Patch(typeof(SlugAlphaPatch));
         Patch(typeof(UiCanvasPatch.Initialize));
         Patch(typeof(UiCanvasPatch.DisplaySettingsChanged));
         Patch(typeof(HudProjectionPatch));
+        if (Rendering.GpuProfile.Enabled)
+        {
+            Patch(typeof(Rendering.GpuProfilePatch));
+            Patch(typeof(Rendering.GpuProfilePassPatch));
+        }
         host.OnBeforeEngineInstantiated += OnBeforeEngineInstantiated;
     }
 
