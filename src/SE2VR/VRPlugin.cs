@@ -27,7 +27,8 @@ public sealed class VRPlugin : IPlugin, IDisposable
         string directory = Path.GetDirectoryName(typeof(VRPlugin).Assembly.Location)!;
         Log.Initialize(Path.Combine(directory, "SE2VR.log"));
         Log.Info($"SE2VR {Version} loading from {directory} (.NET {Environment.Version})");
-        VRConfig.Load(Path.Combine(directory, "SE2VR.json"));
+        // SE2VR_CONFIG points the automated tests at their own settings file, leaving the player's untouched.
+        VRConfig.Load(Environment.GetEnvironmentVariable("SE2VR_CONFIG") is { Length: > 0 } testConfig ? testConfig : Path.Combine(directory, "SE2VR.json"));
         VRSystem.PluginDirectory = directory;
         if (!VRConfig.Current.Enabled)
         {

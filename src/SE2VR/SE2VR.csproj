@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <!-- Must match the runtime the game ships with (see SpaceEngineers2.runtimeconfig.json). -->
@@ -10,7 +10,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>SE2VR</AssemblyName>
     <RootNamespace>SE2VR</RootNamespace>
-    <Version>0.2.2</Version>
+    <Version>0.3.0</Version>
     <!-- Plugin: copy NuGet dependencies (0Harmony.dll) next to the output, but not the game's own assemblies. -->
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>

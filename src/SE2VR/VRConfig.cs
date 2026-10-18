@@ -59,8 +59,17 @@ internal sealed class VRConfig
     /// </summary>
     public bool ShareWorkBetweenEyes { get; set; } = true;
 
-    /// <summary>FSR keeps one temporal history, which both eyes would share and smear. Falls back to FXAA in VR.</summary>
-    public bool DisableFsr { get; set; } = true;
+    /// <summary>
+    /// Use FSR (the game's temporal anti-aliasing and upscaling, when selected in its graphics options) in VR; each eye
+    /// keeps its own FSR history. Off = FXAA, which is cheaper but leaves edges and fine detail shimmering in the headset.
+    /// </summary>
+    public bool FsrInVR { get; set; } = true;
+
+    /// <summary>
+    /// Allow ray tracing while the headset is active. It roughly doubles the GPU time per eye and needs a lot of video
+    /// memory, so it is off in VR by default; the game's own setting (used on the monitor) is not changed.
+    /// </summary>
+    public bool RaytracingInVR { get; set; }
 
     /// <summary>How long to wait at start-up for SteamVR to report the headset before giving up.</summary>
     public float SystemWaitSeconds { get; set; } = 15f;

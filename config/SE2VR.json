@@ -14,7 +14,8 @@
   "RecenterKey": "Home",
   "CaptureKey": "Ctrl+Shift+F10",
   "ShareWorkBetweenEyes": true,
-  "DisableFsr": true,
+  "FsrInVR": true,
+  "RaytracingInVR": false,
   "SystemWaitSeconds": 15,
   "VerboseLogging": false
 }

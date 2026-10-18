@@ -10,6 +10,13 @@ Requirements
 - A PC VR headset with SteamVR (or another OpenXR runtime set as the active one).
 - A strong graphics card: the game is drawn twice per frame, once per eye.
 
+Graphics settings for VR
+- Use the Low or Medium graphics preset. High and Extreme are far too heavy with two eyes: on an 8 GB card they run
+  out of video memory, which makes the game stutter and can crash the graphics driver.
+- Keep Anti-aliasing on FSR. In VR each eye gets its own FSR history; without it edges and fine detail shimmer.
+- Ray tracing is switched off while you play in VR (set RaytracingInVR to true in SE2VR.json to allow it). Your
+  normal setting is kept for playing on the monitor.
+
 Install
 1. Extract this zip anywhere.
 2. Double-click Install.cmd.
@@ -37,7 +44,10 @@ Settings (edit %LOCALAPPDATA%\SE2VR\SE2VR.json with Notepad while the game is cl
 - RecenterKey (Home), ShowCursor (true), Enabled (true = VR on).
 
 Troubleshooting
-- Everything the mod does is written to %LOCALAPPDATA%\SE2VR\SE2VR.log.
+- Everything the mod does is written to %LOCALAPPDATA%\SE2VR\SE2VR.log. Every 10 seconds it notes the frame rate and
+  video memory use, and it warns when video memory is full.
+- The desktop shortcut writes what it did to %LOCALAPPDATA%\SE2VR\launcher.log, and shows a message if the game
+  could not be started.
 - If the headset is not found within 15 seconds, the game starts normally on the monitor.
 - Your normal display settings (full screen, resolution, v-sync) are kept for playing without VR.
 

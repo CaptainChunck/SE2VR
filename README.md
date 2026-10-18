@@ -41,8 +41,11 @@ renders with DirectX 12, so a plugin can work directly with the renderer:
 7. **Desktop window.** The window keeps showing the right eye as a mirror. The plugin keeps the player's saved display
    settings unchanged, so the VR window size never ends up in the game's options.
 
-The game's built-in temporal upscaler (FSR) is switched to FXAA while the headset is active, because one temporal
-history cannot serve two viewpoints.
+The game's temporal anti-aliasing and upscaler (FSR; version 3.1 on NVIDIA and older AMD cards) keeps working in VR:
+the right eye gets its own FSR context, so each eye's history only ever sees that eye. Without temporal anti-aliasing
+the game's dithering and fine detail shimmer badly in a headset. Ray tracing is switched off while the headset is
+active (see `RaytracingInVR`), because per eye it costs about as much as the rest of the frame and its buffers would
+be needed twice.
 
 ## Requirements
 
@@ -51,7 +54,8 @@ history cannot serve two viewpoints.
   OpenXR runtime".
 - To build from source only: .NET SDK 9 or newer.
 - A strong GPU. Rendering SE2 twice per frame at headset resolution is heavy. Lower `RenderScale` (see below) and the
-  game's graphics preset until it is smooth.
+  game's graphics preset until it is smooth. With 8 GB of video memory use the Low or Medium preset in VR: High and
+  Extreme run out of video memory with two eyes and can crash the graphics driver ("device removed").
 
 ## Install (players)
 
@@ -110,7 +114,8 @@ To play without VR, remove the launch option, or set `"Enabled": false` in `SE2V
 | `RecenterKey` | `Home` | Makes your current head position and heading the new "forward". Accepts names like `Home`, `F8` or `Ctrl+R`. Empty disables it. |
 | `CaptureKey` | `Ctrl+Shift+F10` | Saves the images sent to the headset (both eyes and the UI panel) as PNGs in the `captures` folder. |
 | `ShareWorkBetweenEyes` | `true` | Does eye-independent work (shadow refreshes, reflection probes, cloud shadows) once per frame instead of once per eye. Saves about 1.5 ms per frame in large worlds. Turn off if you ever see a shadow or reflection glitch in one eye. |
-| `DisableFsr` | `true` | Uses FXAA instead of FSR while in VR. |
+| `FsrInVR` | `true` | Uses the game's FSR anti-aliasing and upscaling in VR (when it is selected in the game's graphics options), with a separate history per eye. `false` uses FXAA, which is a little cheaper but leaves edges and fine detail shimmering. |
+| `RaytracingInVR` | `false` | Allows ray tracing while the headset is active. It roughly doubles the GPU time and needs much more video memory. The game's own setting, used on the monitor, is not changed. |
 | `SystemWaitSeconds` | `15` | How long to wait at start-up for the headset to appear. |
 | `VerboseLogging` | `false` | Writes more detail to the log. |
 
@@ -179,6 +184,8 @@ without wearing the headset:
 .\tools\Run-UiTour.ps1 -World CRF  # the same in the Creative world (Concordia Research Facility)
 .\tools\Run-MenuTour.ps1           # main menu: settings tabs, new game, load, workshop, credits
 .\tools\Run-ViewCheck.ps1          # loads a world (default: Quick Start Survival on a planet) and captures the 3D view
+.\tools\Run-StabilityCheck.ps1     # captures a still view several times and measures how much it flickers
+.\tools\Run-StabilityCheck.ps1 -Label fxaa -Settings @{ FsrInVR = $false }   # the same with other mod settings
 ```
 
 Each run writes the eye images, the UI panel and a simulated headset view per eye (with the panel and pointer

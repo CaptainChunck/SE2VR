@@ -58,6 +58,7 @@ internal static unsafe class StereoRenderer
     private static bool _loggedStereo;
     private static bool _loggedMenu;
     private static bool _loggedFsr;
+    private static bool _loggedRaytracing;
     private static int _framesWithoutWorld = 1_000_000;
 
     private static readonly bool _testMono = Environment.GetEnvironmentVariable("SE2VR_TEST_MONO") == "1";
@@ -97,14 +98,25 @@ internal static unsafe class StereoRenderer
         _frame++;
         VRConfig config = VRConfig.Current;
         SettingsManager settings = CoreSystems.Settings;
-        if (config.DisableFsr && settings._drs.AAMode == AAMode.FSR)
+        if (!config.FsrInVR && settings._drs.AAMode == AAMode.FSR)
         {
-            // One temporal history cannot serve two different viewpoints; FXAA keeps the image stable.
             settings._drs.AAMode = AAMode.FXAA;
             if (!_loggedFsr)
             {
                 _loggedFsr = true;
-                Log.Info("FSR is not supported in VR yet; using FXAA while the headset is active.");
+                Log.Info("FSR is off in VR (FsrInVR in SE2VR.json); using FXAA while the headset is active.");
+            }
+        }
+        if (!config.RaytracingInVR && settings._raytracing.Enabled)
+        {
+            // Per eye it costs about as much again as the rest of the frame, and its buffers would be needed twice.
+            RaytracingSettings raytracing = settings._raytracing;
+            raytracing.Enabled = false;
+            settings.SetRaytracingSettings(in raytracing);
+            if (!_loggedRaytracing)
+            {
+                _loggedRaytracing = true;
+                Log.Info("Ray tracing is off while the headset is active (RaytracingInVR in SE2VR.json); the game's own setting is unchanged.");
             }
         }
 
@@ -313,11 +325,15 @@ internal static unsafe class StereoRenderer
             {
                 RenderView previous = _eyeViews[eye];
                 bool hadHistory = _eyeHasHistory[eye] && continuous;
-                BuildEyeView(eye, in center);
+                BuildEyeView(eye, in center, hadHistory);
                 liveView = _eyeViews[eye];
                 settings._previousRenderView = hadHistory ? previous : _eyeViews[eye];
                 CurrentEye = eye;
-                if (eye == 1)
+                if (eye == 0)
+                {
+                    EyeHistory.BeginLeftEye();
+                }
+                else
                 {
                     rightEyeHistory = true;
                     EyeHistory.BeginRightEye();
@@ -361,9 +377,10 @@ internal static unsafe class StereoRenderer
 
     /// <summary>
     /// The eye camera is the game camera with the tracked eye pose (relative to the seated origin) applied on top, so
-    /// mouse/gamepad still steer the body and the headset adds free head movement.
+    /// mouse/gamepad still steer the body and the headset adds free head movement. Without <paramref name="continuous"/>
+    /// history (first frame after menus, camera cut) the view is marked as a cut, which makes FSR start over.
     /// </summary>
-    private static void BuildEyeView(int eye, in RenderView center)
+    private static void BuildEyeView(int eye, in RenderView center, bool continuous)
     {
         if (_testMono)
         {
@@ -394,7 +411,7 @@ internal static unsafe class StereoRenderer
         {
             engineFov = _engineFovOverride; // diagnostics only (SE2VR_ENGINE_FOV)
         }
-        view.SetCameraParameters(in eyeWorld, engineFov, center.NearClipping, center.FarClipping, center.VeryFarClipping, projectionOffset, smooth: true);
+        view.SetCameraParameters(in eyeWorld, engineFov, center.NearClipping, center.FarClipping, center.VeryFarClipping, projectionOffset, smooth: continuous);
 
         // SetCameraParameters derives the aspect ratio from the render resolution; replace the projection with the
         // exact per-eye frustum so it matches what the compositor expects even if the resolution aspect differs.
