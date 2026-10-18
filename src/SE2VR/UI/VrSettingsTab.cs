@@ -35,9 +35,19 @@ internal static class VrSettingsTab
             {
                 return; // no headset this session: nothing to set
             }
-            var tab = new TabItem { Header = "VR", Content = Build(__instance) };
+            var page = new Page { Screen = __instance };
+            var tab = new TabItem { Header = "VR", Content = Build(page) };
+            page.Tab = tab;
             __instance.PART_TabControl.Items.Add(tab);
             AddRestoreButton(__instance, tab);
+            // The headset shows the HUD parts only while the Modify UI section is on screen.
+            tab.PropertyChanged += (_, e) =>
+            {
+                if (e.Property == TabItem.IsSelectedProperty)
+                {
+                    page.UpdateEditorState();
+                }
+            };
         }
         catch (Exception e)
         {
@@ -49,20 +59,26 @@ internal static class VrSettingsTab
     {
         public required OptionsScreen Screen { get; init; }
         public List<Action> Refreshers { get; } = new();
+        public StackPanel Editor { get; } = new() { IsVisible = false };
+        public TabItem? Tab { get; set; }
+
+        /// <summary>The editor counts as open while its section is shown on the selected VR tab.</summary>
+        public void UpdateEditorState() => ModifyUiEditor.IsOpen = Editor.IsVisible && Tab is { IsSelected: true };
     }
 
-    private static Control Build(OptionsScreen screen)
+    private static Control Build(Page page)
     {
-        var page = new Page { Screen = screen };
+        OptionsScreen screen = page.Screen;
         var rows = new StackPanel { Margin = new Thickness(0, 0, 11, 0) };
 
-        var editor = new StackPanel { IsVisible = false };
+        StackPanel editor = page.Editor;
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(8), Spacing = 16 };
         buttons.Children.Add(MenuButton("MODIFY UI", "Take parts of the HUD off the menu screen and place them around your view, where they follow your head. " +
-                                                     "Open it from the in-game menu: while it is open the headset shows every part where it will be.", page, () =>
+                                                     "While it is open the headset shows every part that follows your head in a frame (the chosen part in blue), " +
+                                                     "with a picture of your HUD from the last moment you played, and every change shows right away.", page, () =>
         {
             editor.IsVisible = !editor.IsVisible;
-            ModifyUiEditor.IsOpen = editor.IsVisible;
+            page.UpdateEditorState();
         }));
         buttons.Children.Add(MenuButton("RECENTER VIEW", "Makes the direction you are looking the new forward (same as the Home key).", page, () => VRSystem.Xr?.RequestRecenter(0)));
         rows.Children.Add(buttons);
@@ -116,23 +132,34 @@ internal static class VrSettingsTab
         Header(editor, "Modify UI");
         HudLayout.Piece Selected() => HudLayout.Pieces[Math.Clamp(ModifyUiEditor.Selected, 0, HudLayout.Pieces.Length - 1)];
         HudPieceSettings Current() => HudLayout.SettingsFor(Selected());
+        // A part only moves in the headset while it follows your head: placing one switches that on, so it shows at once.
+        void Place(Action<HudPieceSettings> change)
+        {
+            HudPieceSettings settings = Current();
+            change(settings);
+            if (!settings.FollowHead)
+            {
+                settings.FollowHead = true;
+                Dispatch(RefreshAll);
+            }
+        }
         string[] names = Array.ConvertAll(HudLayout.Pieces, p => p.Name);
-        Choice(editor, page, "Part of the HUD", "The part of the HUD to place. Each one can stay on the menu screen or follow your head.",
+        Choice(editor, page, "Part of the HUD", "The part of the HUD to place; its frame is the blue one in the headset. Each part can stay on the menu screen or follow your head.",
             names, () => Selected().Name, name =>
             {
                 ModifyUiEditor.Selected = Math.Max(0, Array.IndexOf(names, name));
                 Dispatch(RefreshAll); // show the newly picked part's values
             }, save: false);
-        Toggle(editor, page, "Follows your head", "Takes this part off the menu screen and keeps it in your view wherever you look.",
+        Toggle(editor, page, "Follows your head", "Takes this part off the menu screen and keeps it in your view wherever you look. Moving the part switches this on.",
             () => Current().FollowHead, v => Current().FollowHead = v);
         Slider(editor, page, "Left / right, degrees", "Where the part sits in your view: to the right (positive) or left (negative) of the middle.",
-            -70, 70, () => Current().LeftRight, v => Current().LeftRight = (float)v);
+            -70, 70, () => Current().LeftRight, v => Place(s => s.LeftRight = (float)v));
         Slider(editor, page, "Up / down, degrees", "Where the part sits in your view: above (positive) or below (negative) the middle.",
-            -60, 60, () => Current().UpDown, v => Current().UpDown = (float)v);
+            -60, 60, () => Current().UpDown, v => Place(s => s.UpDown = (float)v));
         Slider(editor, page, "Distance, cm", "How far from your eyes the part floats. Parts at the same distance sit on the same plane.",
-            30, 300, () => Current().Distance * 100, v => Current().Distance = (float)(v / 100));
+            30, 300, () => Current().Distance * 100, v => Place(s => s.Distance = (float)(v / 100)));
         Slider(editor, page, "Size, %", "100% is the size it has on the menu screen.",
-            50, 300, () => Current().Size * 100, v => Current().Size = (float)(v / 100));
+            50, 300, () => Current().Size * 100, v => Place(s => s.Size = (float)(v / 100)));
         var reset = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(8) };
         reset.Children.Add(MenuButton("RESET THIS PART", "Puts the chosen part back where it starts, on the menu screen.", page, () =>
         {

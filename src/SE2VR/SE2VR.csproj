@@ -10,7 +10,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>SE2VR</AssemblyName>
     <RootNamespace>SE2VR</RootNamespace>
-    <Version>0.4.0</Version>
+    <Version>0.4.1</Version>
     <!-- Plugin: copy NuGet dependencies (0Harmony.dll) next to the output, but not the game's own assemblies. -->
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>

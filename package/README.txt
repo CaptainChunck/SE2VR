@@ -41,8 +41,10 @@ VR settings in the game
 - Settings has a VR tab: render resolution, dynamic resolution, foveated rendering, FSR, ray tracing in VR, post
   effects, world scale, menu screen size and distance. Changes apply right away and are saved.
 - MODIFY UI (top of the VR tab) takes parts of the HUD off the menu screen and places them around your view, where
-  they follow your head: suit status, toolbar, ship status, objectives, notifications, warnings. Open it from the
-  in-game menu (Esc): while it is open the headset shows each part where it will be.
+  they follow your head: suit status, toolbar, ship status, objectives, notifications, warnings. While it is open the
+  headset shows every part that follows your head in a frame (the chosen part in blue) with a picture of your HUD,
+  so you see each change right away. Open it from the in-game menu (Esc) to see your HUD in the parts; from the main
+  menu the parts show as empty frames. Moving a part switches "Follows your head" on.
 - RESTORE puts the VR settings and the HUD layout back to their defaults.
 
 Settings file (%LOCALAPPDATA%\SE2VR\SE2VR.json, edit with Notepad while the game is closed)

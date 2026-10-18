@@ -75,8 +75,10 @@ parts of the HUD off the menu screen - suit status, toolbar, ship status, object
 place each one around your view, where it follows your head: left/right and up/down in degrees, distance and size.
 A part is a piece of the UI image the plugin already renders, shown by the VR compositor as its own head-locked
 panel, so it costs no extra rendering. Parts follow your head only while you play (the game hides the mouse pointer);
-when a menu is open they go back on the menu screen, except while MODIFY UI is open, when they show their last picture
-so you can place them.
+when a menu is open they go back on the menu screen. While MODIFY UI is open (from the pause menu or the main menu)
+the headset shows every part that follows your head in a see-through frame, the chosen part in blue, with a picture of
+the HUD from the last moment you played (kept every few frames during play, as menus have no HUD), so every change
+shows right away. Moving a part switches "Follows your head" on.
 
 ## Requirements
 
@@ -224,6 +226,7 @@ without wearing the headset:
 .\tools\Run-ViewCheck.ps1          # loads a world (default: Quick Start Survival on a planet) and captures the 3D view
 .\tools\Run-StabilityCheck.ps1     # captures a still view several times and measures how much it flickers
 .\tools\Run-ParticleCheck.ps1      # uses the welder, grinder and drill and flies the jetpack, capturing both eyes
+.\tools\Run-HudEditorCheck.ps1     # MODIFY UI from the pause menu and the main menu: framed HUD parts, highlight, auto-follow
 .\tools\Run-StabilityCheck.ps1 -Label fxaa -Settings @{ FsrInVR = $false }   # the same with other mod settings
 ```
 

@@ -17,6 +17,7 @@ using SE2VR.UI;
 using Vortice.Direct3D12;
 using Box = Vortice.Mathematics.Box;
 using Color4 = Vortice.Mathematics.Color4;
+using Format = Vortice.DXGI.Format;
 using RawRect = Vortice.RawRect;
 using Color = Vortice.Mathematics.Color;
 
@@ -47,14 +48,24 @@ internal static unsafe class StereoRenderer
     private static readonly XrImageSwapchain?[] _eyeSwapchains = new XrImageSwapchain?[2];
     private static XrImageSwapchain? _uiSwapchain;
 
-    // HUD parts that follow your head (see HudLayout): the last gameplay picture of the UI, which the parts show, and
-    // the menu screen without those parts. Created the first time a part is taken off the menu screen.
+    // HUD parts that follow your head (see HudLayout): the image the parts show (this frame's UI during gameplay, the
+    // kept picture in the Modify UI editor) and the menu screen without those parts. Created on first use.
     private static XrImageSwapchain? _hudSwapchain;
     private static XrImageSwapchain? _uiMainSwapchain;
-    private static bool _hudHasPicture;
     private static bool _piecesLive;
     private static XrCompositionLayerQuad* _pieceLayers;
     private static readonly bool _testHudPieces = Environment.GetEnvironmentVariable("SE2VR_TEST_HUD_PIECES") == "1";
+
+    // Modify UI editor: pictures of the HUD from gameplay (the editor is opened from a menu, where the game draws no
+    // HUD) - the one shown and the newest - and the frames drawn behind the parts, one cell per part (see LayoutFrames).
+    private static BackBuffer? _hudPicture, _hudPending;
+    private static bool _hudHasPicture, _hudHasPending;
+    private static long _hudPendingTime;
+    private static XrImageSwapchain? _hudFramesSwapchain;
+    private static readonly RawRect[] _frameCells = new RawRect[HudLayout.Pieces.Length];
+    private static XrCompositionLayerQuad* _frameLayers;
+    private static bool _editorFrames, _editorPicture, _editorFailed;
+    private static readonly BackBuffer?[] _hudCopyTargets = new BackBuffer?[3];
 
     private static XrCompositionLayerProjection* _projectionLayer;
     private static XrCompositionLayerProjectionView* _projectionViews;
@@ -234,6 +245,7 @@ internal static unsafe class StereoRenderer
 
         uint layerCount = 0;
         _previewLayers.Clear();
+        _piecesLive = _editorFrames = _editorPicture = false;
         CpuProfile.Mark("acquire");
         if (sceneDraw)
         {
@@ -270,7 +282,7 @@ internal static unsafe class StereoRenderer
             // The UI canvas is the top-left part of the final image (see UiCanvas).
             if (menuPanel && CopyToImage(_uiSwapchain!, finalLDRBuffer, "VR.MenuPanel", "menu"))
             {
-                layerCount = BuildMenuLayer(xr);
+                layerCount = BuildMenuLayer(xr, withPieces: ModifyUiEditor.IsOpen && PrepareEditor(xr));
                 if (!_loggedMenu)
                 {
                     _loggedMenu = true;
@@ -661,70 +673,280 @@ internal static unsafe class StereoRenderer
         _uiSwapchain?.Release();
         _hudSwapchain?.Release();
         _uiMainSwapchain?.Release();
+        _hudFramesSwapchain?.Release();
         VrCursor.ReleaseImage();
     }
 
     /// <summary>
-    /// When HUD parts follow your head: during gameplay (the game hides the mouse pointer) copy this frame's UI into
-    /// the parts' image and into the menu screen's image with those parts cut out. With a menu open the parts go back
-    /// on the menu screen, except while Modify UI is open, when they show their last picture so they can be placed.
-    /// Returns whether the parts are shown this frame.
+    /// Seconds between two pictures of the HUD for the Modify UI editor. The editor shows the one before the newest,
+    /// which is at least this old when play stops: the game hides the HUD a moment before a menu and the mouse pointer
+    /// show, so the newest picture can be of an empty HUD.
+    /// </summary>
+    private const double HudPictureSeconds = 1.0;
+
+    /// <summary>
+    /// HUD parts that follow your head. During gameplay (the game hides the mouse pointer) this frame's UI is copied
+    /// into the parts' image and into the menu screen's image with those parts cut out. With a menu open the parts go
+    /// back on the menu screen, except while Modify UI is open (see <see cref="PrepareEditor"/>). Every second of
+    /// gameplay a picture of the HUD is kept as well, because the editor is opened from a menu, where there is no HUD.
+    /// Returns whether parts are shown this frame.
     /// </summary>
     private static bool PrepareHudPieces(XrRuntime xr)
     {
-        _piecesLive = false;
-        if (!HudLayout.AnyFollowsHead())
-        {
-            return false;
-        }
         bool gameplay = _testHudPieces || !VrCursor.IsPointerShowing();
         if (!gameplay)
         {
-            return ModifyUiEditor.IsOpen && _hudHasPicture;
+            return ModifyUiEditor.IsOpen && PrepareEditor(xr);
         }
-        XrImageSwapchain ui = _uiSwapchain!;
-        if (_hudSwapchain == null || _hudSwapchain.Width != ui.Width || _hudSwapchain.Height != ui.Height)
-        {
-            _hudSwapchain?.Dispose();
-            _uiMainSwapchain?.Dispose();
-            _hudSwapchain = new XrImageSwapchain(xr, "HUD", ui.Width, ui.Height);
-            _uiMainSwapchain = new XrImageSwapchain(xr, "UIMain", ui.Width, ui.Height);
-            _hudHasPicture = false;
-        }
-        if (!_hudSwapchain.Acquire() || !_uiMainSwapchain!.Acquire())
+        bool following = HudLayout.AnyFollowsHead();
+        bool keepPicture = Stopwatch.GetTimestamp() - _hudPendingTime >= (long)(HudPictureSeconds * Stopwatch.Frequency);
+        if (!following && !keepPicture)
         {
             return false;
         }
-        BackBuffer source = ui.Current!, hud = _hudSwapchain.Current!, main = _uiMainSwapchain.Current!;
-        var cutouts = new List<RawRect>();
-        foreach (HudLayout.Piece piece in HudLayout.Pieces)
+        XrImageSwapchain ui = _uiSwapchain!;
+        int targets = 0;
+        if (following)
         {
-            if (HudLayout.SettingsFor(piece).FollowHead)
+            EnsureSwapchain(xr, ref _hudSwapchain, "HUD", ui.Width, ui.Height);
+            EnsureSwapchain(xr, ref _uiMainSwapchain, "UIMain", ui.Width, ui.Height);
+            if (!_hudSwapchain!.Acquire() || !_uiMainSwapchain!.Acquire())
             {
-                cutouts.Add(new RawRect((int)(piece.X0 * ui.Width), (int)(piece.Y0 * ui.Height), (int)MathF.Ceiling(piece.X1 * ui.Width), (int)MathF.Ceiling(piece.Y1 * ui.Height)));
+                return false;
             }
+            _hudCopyTargets[targets++] = _hudSwapchain.Current!;
+            _hudCopyTargets[targets++] = _uiMainSwapchain.Current!;
         }
+        if (keepPicture)
+        {
+            EnsurePictures(ui.Width, ui.Height);
+            if (_hudHasPending)
+            {
+                // The newest picture is now old enough to be shown; this frame's goes into the other texture.
+                (_hudPicture, _hudPending) = (_hudPending, _hudPicture);
+                _hudHasPicture = true;
+            }
+            _hudCopyTargets[targets++] = _hudPending!;
+        }
+        BackBuffer source = ui.Current!;
         using (DirectCommandList commandList = CoreSystems.FrameDispatcher.CreateDirectCommandList("VR.HudParts"))
         {
             // Same sequence as the engine's copy helpers (which take OpenXR images only as a destination).
             commandList.OnAction();
             commandList.ExplicitStateTransition(source.AutoResourceState, ResourceStates.CopySource, discardResource: false);
-            commandList.ExplicitStateTransition(hud.AutoResourceState, ResourceStates.CopyDest, discardResource: true);
-            commandList.ExplicitStateTransition(main.AutoResourceState, ResourceStates.CopyDest, discardResource: true);
+            for (int i = 0; i < targets; i++)
+            {
+                commandList.ExplicitStateTransition(_hudCopyTargets[i]!.AutoResourceState, ResourceStates.CopyDest, discardResource: true);
+            }
             commandList.ResolveResourceStates();
-            commandList._d3dCommandList.CopyResource(hud.D3DResource, source.D3DResource);
-            commandList._d3dCommandList.CopyResource(main.D3DResource, source.D3DResource);
+            for (int i = 0; i < targets; i++)
+            {
+                commandList._d3dCommandList.CopyResource(_hudCopyTargets[i]!.D3DResource, source.D3DResource);
+            }
             commandList.ExplicitStateTransition(source.AutoResourceState, ResourceStates.RenderTarget, discardResource: false);
-            commandList.ExplicitStateTransition(hud.AutoResourceState, ResourceStates.RenderTarget, discardResource: false);
-            commandList.ExplicitStateTransition(main.AutoResourceState, ResourceStates.RenderTarget, discardResource: false);
+            for (int i = 0; i < targets; i++)
+            {
+                commandList.ExplicitStateTransition(_hudCopyTargets[i]!.AutoResourceState, ResourceStates.RenderTarget, discardResource: false);
+            }
             commandList.ResolveResourceStates();
-            commandList._d3dCommandList.ClearRenderTargetView(main.D3DRTVCpuDescriptorHandle, new Color4(0f, 0f, 0f, 0f), cutouts.ToArray());
-            FrameCapture.Record(commandList, hud, "hud");
-            FrameCapture.Record(commandList, main, "uimain");
+            if (following)
+            {
+                var cutouts = new List<RawRect>();
+                foreach (HudLayout.Piece piece in HudLayout.Pieces)
+                {
+                    if (HudLayout.SettingsFor(piece).FollowHead)
+                    {
+                        cutouts.Add(new RawRect((int)(piece.X0 * ui.Width), (int)(piece.Y0 * ui.Height), (int)MathF.Ceiling(piece.X1 * ui.Width), (int)MathF.Ceiling(piece.Y1 * ui.Height)));
+                    }
+                }
+                BackBuffer main = _uiMainSwapchain!.Current!;
+                commandList._d3dCommandList.ClearRenderTargetView(main.D3DRTVCpuDescriptorHandle, new Color4(0f, 0f, 0f, 0f), cutouts.ToArray());
+                FrameCapture.Record(commandList, _hudSwapchain!.Current!, "hud");
+                FrameCapture.Record(commandList, main, "uimain");
+            }
         }
-        _hudHasPicture = true;
-        _piecesLive = true;
-        return true;
+        Array.Clear(_hudCopyTargets);
+        if (keepPicture)
+        {
+            _hudHasPending = true;
+            _hudPendingTime = Stopwatch.GetTimestamp();
+        }
+        _piecesLive = following;
+        return following;
+    }
+
+    /// <summary>
+    /// Modify UI is open (from a menu): every part that follows your head is shown in a frame, the part being placed
+    /// highlighted, with the HUD's last picture from gameplay (frames only until a world has been played), so every
+    /// change can be seen while the settings stay open. Returns whether the parts are shown.
+    /// </summary>
+    private static bool PrepareEditor(XrRuntime xr)
+    {
+        if (_editorFailed)
+        {
+            return false;
+        }
+        try
+        {
+            XrImageSwapchain ui = _uiSwapchain!;
+            if (_hudFramesSwapchain == null)
+            {
+                LayoutFrames(ui.Width, ui.Height, out int width, out int height);
+                _hudFramesSwapchain = new XrImageSwapchain(xr, "HudFrames", width, height);
+            }
+            if (!_hudFramesSwapchain.Acquire())
+            {
+                return false;
+            }
+            bool picture = false;
+            if (_hudHasPicture && _hudPicture != null && _hudPicture.Resolution == new Vector2I(ui.Width, ui.Height))
+            {
+                EnsureSwapchain(xr, ref _hudSwapchain, "HUD", ui.Width, ui.Height);
+                picture = _hudSwapchain!.Acquire();
+            }
+            BackBuffer frames = _hudFramesSwapchain.Current!;
+            using (DirectCommandList commandList = CoreSystems.FrameDispatcher.CreateDirectCommandList("VR.HudEditor"))
+            {
+                commandList.OnAction();
+                commandList.ExplicitStateTransition(frames.AutoResourceState, ResourceStates.RenderTarget, discardResource: true);
+                if (picture)
+                {
+                    BackBuffer hud = _hudSwapchain!.Current!;
+                    commandList.ExplicitStateTransition(_hudPicture!.AutoResourceState, ResourceStates.CopySource, discardResource: false);
+                    commandList.ExplicitStateTransition(hud.AutoResourceState, ResourceStates.CopyDest, discardResource: true);
+                    commandList.ResolveResourceStates();
+                    commandList._d3dCommandList.CopyResource(hud.D3DResource, _hudPicture.D3DResource);
+                    commandList.ExplicitStateTransition(_hudPicture.AutoResourceState, ResourceStates.RenderTarget, discardResource: false);
+                    commandList.ExplicitStateTransition(hud.AutoResourceState, ResourceStates.RenderTarget, discardResource: false);
+                }
+                commandList.ResolveResourceStates();
+                DrawFrames(commandList, frames);
+                if (picture)
+                {
+                    FrameCapture.Record(commandList, _hudSwapchain!.Current!, "hud");
+                }
+                FrameCapture.Record(commandList, frames, "hudframes");
+            }
+            _editorFrames = true;
+            _editorPicture = picture;
+            return true;
+        }
+        catch (Exception e)
+        {
+            _editorFailed = true;
+            Log.Error("Could not show the HUD parts in the Modify UI editor; they still show during play.", e);
+            return false;
+        }
+    }
+
+    /// <summary>Edge length of a frame cell compared to its part on the UI image (the frames are plain colors).</summary>
+    private const int FramesScale = 2;
+
+    /// <summary>
+    /// One cell per HUD part in the frames image, stacked top to bottom with a transparent gap. Each cell has its part's
+    /// shape, so the frame's border is equally thick all round when the cell is stretched over the part's quad (the
+    /// parts' own rectangles on the UI image overlap, so they cannot be used directly).
+    /// </summary>
+    private static void LayoutFrames(int uiWidth, int uiHeight, out int width, out int height)
+    {
+        const int gap = 2;
+        width = 1;
+        height = 0;
+        for (int i = 0; i < HudLayout.Pieces.Length; i++)
+        {
+            HudLayout.Piece piece = HudLayout.Pieces[i];
+            int w = Math.Max(16, (int)MathF.Ceiling((piece.X1 - piece.X0) * uiWidth / FramesScale));
+            int h = Math.Max(16, (int)MathF.Ceiling((piece.Y1 - piece.Y0) * uiHeight / FramesScale));
+            _frameCells[i] = new RawRect(0, height, w, height + h);
+            width = Math.Max(width, w);
+            height += h + gap;
+        }
+    }
+
+    // Premultiplied colors of the editor's frames: a light frame on a dark see-through fill, the chosen part in cyan.
+    private static readonly Color4 FrameFill = new(0f, 0f, 0f, 0.3f);
+    private static readonly Color4 FrameBorder = new(0.45f, 0.45f, 0.45f, 0.85f);
+    private static readonly Color4 SelectedFill = new(0f, 0.09f, 0.11f, 0.35f);
+    private static readonly Color4 SelectedBorder = new(0.05f, 0.6f, 1f, 1f);
+
+    /// <summary>Draws every part's frame into its cell; the part being placed gets a thicker, highlighted frame.</summary>
+    private static void DrawFrames(DirectCommandList commandList, BackBuffer frames)
+    {
+        var list = commandList._d3dCommandList;
+        CpuDescriptorHandle target = frames.D3DRTVCpuDescriptorHandle;
+        // An empty rectangle list would clear the whole image, so the whole image is the first clear on purpose.
+        list.ClearRenderTargetView(target, new Color4(0f, 0f, 0f, 0f), new[] { new RawRect(0, 0, frames.Resolution.X, frames.Resolution.Y) });
+        int selected = Math.Clamp(ModifyUiEditor.Selected, 0, HudLayout.Pieces.Length - 1);
+        var fills = new List<RawRect>();
+        var borders = new List<RawRect>();
+        for (int i = 0; i < _frameCells.Length; i++)
+        {
+            if (i != selected)
+            {
+                fills.Add(_frameCells[i]);
+                AddBorder(borders, _frameCells[i], 2);
+            }
+        }
+        if (fills.Count > 0)
+        {
+            list.ClearRenderTargetView(target, FrameFill, fills.ToArray());
+            list.ClearRenderTargetView(target, FrameBorder, borders.ToArray());
+        }
+        borders.Clear();
+        AddBorder(borders, _frameCells[selected], 3);
+        list.ClearRenderTargetView(target, SelectedFill, new[] { _frameCells[selected] });
+        list.ClearRenderTargetView(target, SelectedBorder, borders.ToArray());
+    }
+
+    private static void AddBorder(List<RawRect> rects, RawRect cell, int thickness)
+    {
+        rects.Add(new RawRect(cell.Left, cell.Top, cell.Right, cell.Top + thickness));
+        rects.Add(new RawRect(cell.Left, cell.Bottom - thickness, cell.Right, cell.Bottom));
+        rects.Add(new RawRect(cell.Left, cell.Top + thickness, cell.Left + thickness, cell.Bottom - thickness));
+        rects.Add(new RawRect(cell.Right - thickness, cell.Top + thickness, cell.Right, cell.Bottom - thickness));
+    }
+
+    /// <summary>Creates the OpenXR image on first use (the UI's size only changes with all images recreated).</summary>
+    private static void EnsureSwapchain(XrRuntime xr, ref XrImageSwapchain? swapchain, string name, int width, int height)
+    {
+        if (swapchain == null || swapchain.Width != width || swapchain.Height != height)
+        {
+            swapchain?.Dispose();
+            swapchain = new XrImageSwapchain(xr, name, width, height);
+        }
+    }
+
+    /// <summary>The textures holding the HUD pictures for the editor: our own, as OpenXR images cannot be read once released.</summary>
+    private static void EnsurePictures(int width, int height)
+    {
+        if (_hudPicture != null && _hudPicture.Resolution == new Vector2I(width, height))
+        {
+            return;
+        }
+        DisposePictures();
+        _hudPicture = CreatePicture(width, height, "SE2VR HUD picture");
+        _hudPending = CreatePicture(width, height, "SE2VR HUD picture (newest)");
+    }
+
+    private static BackBuffer CreatePicture(int width, int height, string name)
+    {
+        ID3D12Resource resource = CoreSystems.DeviceWrap.D3DDevice.CreateCommittedResource(new HeapProperties(HeapType.Default), HeapFlags.None,
+            ResourceDescription.Texture2D(Format.R8G8B8A8_UNorm_SRgb, (uint)width, (uint)height, 1, 1, flags: ResourceFlags.AllowRenderTarget),
+            ResourceStates.RenderTarget);
+        resource.Name = name;
+        var picture = new BackBuffer();
+        picture.Initialize(resource, ResourceStates.RenderTarget, new Vector2I(width, height), Format.R8G8B8A8_UNorm_SRgb, new Color(0f, 0f, 0f, 0f));
+        return picture;
+    }
+
+    /// <summary>The GPU must be done with the pictures (resolution change or shutdown).</summary>
+    private static void DisposePictures()
+    {
+        _hudPicture?.GPUDispose();
+        _hudPending?.GPUDispose();
+        _hudPicture = _hudPending = null;
+        _hudHasPicture = _hudHasPending = false;
+        _hudPendingTime = 0;
     }
 
     private static uint BuildStereoLayers(XrRuntime xr, bool withUi, bool withPieces)
@@ -756,7 +978,7 @@ internal static unsafe class StereoRenderer
         _layers[count++] = _piecesLive ? SetPanel(xr, blended: true, "uimain", _uiMainSwapchain!) : SetPanel(xr, blended: true, "ui", _uiSwapchain!);
         if (withPieces)
         {
-            count = AddHudPieces(xr, count);
+            count = AddHudPieces(xr, count, frames: _editorFrames, pictures: _piecesLive || _editorPicture);
         }
         if (SetCursor(xr))
         {
@@ -765,52 +987,80 @@ internal static unsafe class StereoRenderer
         return count;
     }
 
-    /// <summary>A quad per HUD part that follows your head, in view space, showing its part of the HUD image.</summary>
-    private static uint AddHudPieces(XrRuntime xr, uint count)
+    /// <summary>
+    /// A quad per HUD part that follows your head, in view space, showing its part of the HUD image. In the Modify UI
+    /// editor each part also gets its frame; all frames come first, so no frame covers another part's picture.
+    /// </summary>
+    private static uint AddHudPieces(XrRuntime xr, uint count, bool frames, bool pictures)
     {
-        XrImageSwapchain hud = _hudSwapchain!;
         XrImageSwapchain ui = _uiSwapchain!;
-        float degreesPerPixel = VRConfig.Current.UiWidthDegrees / ui.Width;
-        int index = 0;
+        int following = 0;
         foreach (HudLayout.Piece piece in HudLayout.Pieces)
         {
-            HudPieceSettings settings = HudLayout.SettingsFor(piece);
-            if (!settings.FollowHead || count >= xr.MaxLayerCount - 1)
+            following += HudLayout.SettingsFor(piece).FollowHead ? 1 : 0;
+        }
+        // One layer stays free for the mouse pointer; with too few layers left the pictures win over the frames.
+        if (frames && pictures && count + 2 * following > xr.MaxLayerCount - 1)
+        {
+            frames = false;
+        }
+        float degreesPerPixel = VRConfig.Current.UiWidthDegrees / ui.Width;
+        for (int pass = 0; pass < 2; pass++)
+        {
+            bool framePass = pass == 0;
+            if (framePass ? !frames : !pictures)
             {
                 continue;
             }
-            int x = (int)(piece.X0 * hud.Width), y = (int)(piece.Y0 * hud.Height);
-            int width = Math.Max(1, (int)MathF.Ceiling(piece.X1 * hud.Width) - x), height = Math.Max(1, (int)MathF.Ceiling(piece.Y1 * hud.Height) - y);
-            float distance = Math.Clamp(settings.Distance, 0.2f, 10f);
-            float angle = width * degreesPerPixel * Math.Clamp(settings.Size, 0.2f, 5f) * MathF.PI / 180f;
-            float quadWidth = 2f * distance * MathF.Tan(Math.Min(angle, 3f) / 2f);
-            XrPosef pose = PoseInView(settings.LeftRight, settings.UpDown, distance);
-            XrCompositionLayerQuad* layer = &_pieceLayers[index++];
-            *layer = new XrCompositionLayerQuad
+            XrImageSwapchain image = framePass ? _hudFramesSwapchain! : _hudSwapchain!;
+            for (int i = 0; i < HudLayout.Pieces.Length; i++)
             {
-                Type = XrStructureType.CompositionLayerQuad,
-                LayerFlags = XrConst.CompositionLayerBlendTextureSourceAlpha,
-                Space = xr.ViewSpace,
-                EyeVisibility = XrConst.EyeVisibilityBoth,
-                SubImage = new XrSwapchainSubImage { Swapchain = hud.Handle, ImageRect = new XrRect2Di { OffsetX = x, OffsetY = y, Width = width, Height = height } },
-                Pose = pose,
-                Size = new XrExtent2Df { Width = quadWidth, Height = quadWidth * height / width }
-            };
-            _layers[count++] = layer;
-            if (FrameCapture.Active)
-            {
-                _previewLayers.Add(new PreviewLayer
+                HudLayout.Piece piece = HudLayout.Pieces[i];
+                HudPieceSettings settings = HudLayout.SettingsFor(piece);
+                if (!settings.FollowHead || count >= xr.MaxLayerCount - 1)
                 {
-                    Image = "hud",
-                    Blended = true,
-                    Pose = HeadPose(xr).Compose(pose),
-                    Width = quadWidth,
-                    Height = quadWidth * height / width,
-                    U0 = (float)x / hud.Width,
-                    V0 = (float)y / hud.Height,
-                    U1 = (float)(x + width) / hud.Width,
-                    V1 = (float)(y + height) / hud.Height
-                });
+                    continue;
+                }
+                // The part's rectangle on the UI image sets the quad's size; the frame's cell has the same shape.
+                int x = (int)(piece.X0 * ui.Width), y = (int)(piece.Y0 * ui.Height);
+                int width = Math.Max(1, (int)MathF.Ceiling(piece.X1 * ui.Width) - x), height = Math.Max(1, (int)MathF.Ceiling(piece.Y1 * ui.Height) - y);
+                float distance = Math.Clamp(settings.Distance, 0.2f, 10f);
+                float angle = width * degreesPerPixel * Math.Clamp(settings.Size, 0.2f, 5f) * MathF.PI / 180f;
+                float quadWidth = 2f * distance * MathF.Tan(Math.Min(angle, 3f) / 2f);
+                float quadHeight = quadWidth * height / width;
+                XrPosef pose = PoseInView(settings.LeftRight, settings.UpDown, distance);
+                RawRect rect = framePass ? _frameCells[i] : new RawRect(x, y, x + width, y + height);
+                XrCompositionLayerQuad* layer = framePass ? &_frameLayers[i] : &_pieceLayers[i];
+                *layer = new XrCompositionLayerQuad
+                {
+                    Type = XrStructureType.CompositionLayerQuad,
+                    LayerFlags = XrConst.CompositionLayerBlendTextureSourceAlpha,
+                    Space = xr.ViewSpace,
+                    EyeVisibility = XrConst.EyeVisibilityBoth,
+                    SubImage = new XrSwapchainSubImage
+                    {
+                        Swapchain = image.Handle,
+                        ImageRect = new XrRect2Di { OffsetX = rect.Left, OffsetY = rect.Top, Width = rect.Right - rect.Left, Height = rect.Bottom - rect.Top }
+                    },
+                    Pose = pose,
+                    Size = new XrExtent2Df { Width = quadWidth, Height = quadHeight }
+                };
+                _layers[count++] = layer;
+                if (FrameCapture.Active)
+                {
+                    _previewLayers.Add(new PreviewLayer
+                    {
+                        Image = framePass ? "hudframes" : "hud",
+                        Blended = true,
+                        Pose = HeadPose(xr).Compose(pose),
+                        Width = quadWidth,
+                        Height = quadHeight,
+                        U0 = (float)rect.Left / image.Width,
+                        V0 = (float)rect.Top / image.Height,
+                        U1 = (float)rect.Right / image.Width,
+                        V1 = (float)rect.Bottom / image.Height
+                    });
+                }
             }
         }
         return count;
@@ -845,15 +1095,20 @@ internal static unsafe class StereoRenderer
         };
     }
 
-    private static uint BuildMenuLayer(XrRuntime xr)
+    /// <param name="withPieces">The Modify UI editor is open: show the HUD parts that follow your head (see <see cref="PrepareEditor"/>).</param>
+    private static uint BuildMenuLayer(XrRuntime xr, bool withPieces)
     {
         _layers[0] = SetPanel(xr, blended: false, "menu", _uiSwapchain!); // opaque virtual screen
-        if (!SetCursor(xr))
+        uint count = 1;
+        if (withPieces)
         {
-            return 1;
+            count = AddHudPieces(xr, count, frames: _editorFrames, pictures: _editorPicture);
         }
-        _layers[1] = _cursorLayer;
-        return 2;
+        if (SetCursor(xr))
+        {
+            _layers[count++] = _cursorLayer;
+        }
+        return count;
     }
 
     /// <summary>Fills in the UI panel layer (curved or flat, see <see cref="UiPanel"/>) and returns it.</summary>
@@ -936,7 +1191,9 @@ internal static unsafe class StereoRenderer
         _cylinderLayer = (XrCompositionLayerCylinderKHR*)NativeMemory.AllocZeroed((nuint)sizeof(XrCompositionLayerCylinderKHR));
         _cursorLayer = (XrCompositionLayerQuad*)NativeMemory.AllocZeroed((nuint)sizeof(XrCompositionLayerQuad));
         _pieceLayers = (XrCompositionLayerQuad*)NativeMemory.AllocZeroed((nuint)(HudLayout.Pieces.Length * sizeof(XrCompositionLayerQuad)));
-        _layers = (void**)NativeMemory.AllocZeroed((nuint)((4 + HudLayout.Pieces.Length) * sizeof(void*)));
+        _frameLayers = (XrCompositionLayerQuad*)NativeMemory.AllocZeroed((nuint)(HudLayout.Pieces.Length * sizeof(XrCompositionLayerQuad)));
+        // Projection, panel, a frame and a picture per HUD part, pointer.
+        _layers = (void**)NativeMemory.AllocZeroed((nuint)((4 + 2 * HudLayout.Pieces.Length) * sizeof(void*)));
     }
 
     private static void DisposeSwapchains()
@@ -952,7 +1209,9 @@ internal static unsafe class StereoRenderer
         _hudSwapchain = null;
         _uiMainSwapchain?.Dispose();
         _uiMainSwapchain = null;
-        _hudHasPicture = false;
+        _hudFramesSwapchain?.Dispose();
+        _hudFramesSwapchain = null;
+        DisposePictures();
     }
 
     /// <summary>Releases GPU resources. Render thread only, with the GPU idle.</summary>
