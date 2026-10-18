@@ -45,6 +45,11 @@ internal sealed class VRConfig
     /// <summary>Key that makes the current head position and heading the new center, e.g. "Home" or "Ctrl+R". Empty disables it.</summary>
     public string RecenterKey { get; set; } = "Home";
 
+    /// <summary>Keys that make the floating panel bigger or smaller while playing, 5 degrees per press. Saved to this file.</summary>
+    public string UiBiggerKey { get; set; } = "Ctrl+PageUp";
+
+    public string UiSmallerKey { get; set; } = "Ctrl+PageDown";
+
     /// <summary>Key that saves the images sent to the headset as PNGs in the "captures" folder. Empty disables it.</summary>
     public string CaptureKey { get; set; } = "Ctrl+Shift+F10";
 
@@ -58,6 +63,9 @@ internal sealed class VRConfig
 
     public static VRConfig Current { get; private set; } = new();
 
+    private static string? _path;
+    private static readonly object _saveLock = new();
+
     // Relaxed escaping keeps hotkeys readable ("Ctrl+R" instead of "Ctrl\u002BR").
     private static readonly JsonSerializerOptions WriteOptions = new()
     {
@@ -67,6 +75,7 @@ internal sealed class VRConfig
 
     public static void Load(string path)
     {
+        _path = path;
         try
         {
             if (File.Exists(path))
@@ -97,6 +106,30 @@ internal sealed class VRConfig
         Current.UiAspectRatio = Math.Clamp(Current.UiAspectRatio, 1f, 4f);
         Log.Verbose = Current.VerboseLogging;
         AddMissingKeys(path);
+    }
+
+    /// <summary>Writes the current settings back to the file, off the calling thread (used for in-game adjustments).</summary>
+    public static void SaveInBackground()
+    {
+        string? path = _path;
+        if (path == null)
+        {
+            return;
+        }
+        System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+        {
+            lock (_saveLock)
+            {
+                try
+                {
+                    File.WriteAllText(path, JsonSerializer.Serialize(Current, WriteOptions));
+                }
+                catch (Exception e)
+                {
+                    Log.Warn($"Could not save {path}: {e.Message}");
+                }
+            }
+        });
     }
 
     /// <summary>Rewrites the file when settings added by a newer version are missing, so they become discoverable.</summary>

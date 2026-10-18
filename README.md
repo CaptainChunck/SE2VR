@@ -98,6 +98,7 @@ To play without VR, remove the launch option, or set `"Enabled": false` in `SE2V
 | `ShowCursor` | `true` | Shows the mouse pointer on the panel. |
 | `ForceWindowedResolution` | `true` | Runs the game in a window sized to one eye, so every rendered pixel reaches the headset. |
 | `LockResolution` | `true` | Ignores display-mode changes from the game's options menu while VR is active. They are still saved for non-VR play. |
+| `UiBiggerKey` / `UiSmallerKey` | `Ctrl+PageUp` / `Ctrl+PageDown` | Make the panel 5 degrees wider or narrower while playing. The new size is saved to `UiWidthDegrees`. |
 | `RecenterKey` | `Home` | Makes your current head position and heading the new "forward". Accepts names like `Home`, `F8` or `Ctrl+R`. Empty disables it. |
 | `CaptureKey` | `Ctrl+Shift+F10` | Saves the images sent to the headset (both eyes and the UI panel) as PNGs in the `captures` folder. |
 | `DisableFsr` | `true` | Uses FXAA instead of FSR while in VR. |

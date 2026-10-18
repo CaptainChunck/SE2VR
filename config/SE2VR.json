@@ -9,6 +9,8 @@
   "ShowCursor": true,
   "ForceWindowedResolution": true,
   "LockResolution": true,
+  "UiBiggerKey": "Ctrl+PageUp",
+  "UiSmallerKey": "Ctrl+PageDown",
   "RecenterKey": "Home",
   "CaptureKey": "Ctrl+Shift+F10",
   "DisableFsr": true,

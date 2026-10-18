@@ -25,13 +25,14 @@ Play
 
 In the game
 - The view recenters when a world loads. Press Home (or use SteamVR's "Reset seated position") to recenter.
+- Ctrl+PageUp / Ctrl+PageDown make the floating panel bigger / smaller (the size is remembered).
 - The mouse turns your character and aims tools; the headset adds free head movement on top.
 - Menus work with the mouse; its pointer is shown on the floating panel. Keep the game window focused.
 - The game window on your monitor mirrors one eye.
 
 Settings (edit %LOCALAPPDATA%\SE2VR\SE2VR.json with Notepad while the game is closed)
 - RenderScale (0.75): resolution per eye. Lower it if the game stutters, raise it for a sharper image.
-- UiWidthDegrees (70): size of the floating panel. Raise it if text is too small to read.
+- UiWidthDegrees (70): size of the floating panel (also Ctrl+PageUp / Ctrl+PageDown in the game).
 - UiDistance (1.6): distance of the panel in meters.
 - RecenterKey (Home), ShowCursor (true), Enabled (true = VR on).
 

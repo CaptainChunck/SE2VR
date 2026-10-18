@@ -15,6 +15,8 @@ internal static class VRSystem
     private static bool _sessionCreationAttempted;
     private static Hotkey? _recenterKey;
     private static Hotkey? _captureKey;
+    private static Hotkey? _uiBiggerKey;
+    private static Hotkey? _uiSmallerKey;
     private static int _frame;
 
     /// <summary>True once the game window was forced to the per-eye resolution; display-mode changes are then ignored.</summary>
@@ -102,7 +104,10 @@ internal static class VRSystem
             }
             _recenterKey = Hotkey.Parse(VRConfig.Current.RecenterKey, "recenter");
             _captureKey = Hotkey.Parse(VRConfig.Current.CaptureKey, "capture");
-            Log.Info($"Recenter key: {_recenterKey?.Text ?? "none"}, capture key: {_captureKey?.Text ?? "none"}.");
+            _uiBiggerKey = Hotkey.Parse(VRConfig.Current.UiBiggerKey, "bigger panel");
+            _uiSmallerKey = Hotkey.Parse(VRConfig.Current.UiSmallerKey, "smaller panel");
+            Log.Info($"Recenter key: {_recenterKey?.Text ?? "none"}, capture key: {_captureKey?.Text ?? "none"}, " +
+                     $"panel size keys: {_uiBiggerKey?.Text ?? "none"} / {_uiSmallerKey?.Text ?? "none"}.");
             if (xr.ForceRender)
             {
                 Log.Warn("Test mode (SE2VR_FORCE_RENDER=1): rendering even when the headset is not displaying.");
@@ -129,6 +134,14 @@ internal static class VRSystem
             Log.Info("Recenter requested.");
             xr.RequestRecenter(0);
         }
+        if (_uiBiggerKey?.WasPressed() == true)
+        {
+            ResizePanel(5f);
+        }
+        if (_uiSmallerKey?.WasPressed() == true)
+        {
+            ResizePanel(-5f);
+        }
         bool capture = _captureKey?.WasPressed() == true;
         // A file named "capture" next to the plugin also triggers a capture; its text (optional) labels the files.
         // Used by the automated test scripts, and handy when the keyboard is out of reach.
@@ -154,6 +167,20 @@ internal static class VRSystem
             Log.Info("Capturing the next VR frame.");
             FrameCapture.Requested = true;
         }
+    }
+
+    /// <summary>Changes the panel's angular width (read every frame by the renderer) and saves it.</summary>
+    private static void ResizePanel(float degrees)
+    {
+        VRConfig config = VRConfig.Current;
+        float size = Math.Clamp(config.UiWidthDegrees + degrees, 30f, 150f);
+        if (size == config.UiWidthDegrees)
+        {
+            return;
+        }
+        config.UiWidthDegrees = size;
+        Log.Info($"UI panel width: {size:0} degrees (saved).");
+        VRConfig.SaveInBackground();
     }
 
     private static bool TryCreateSession(XrRuntime xr)
