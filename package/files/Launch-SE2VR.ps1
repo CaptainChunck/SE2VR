@@ -26,6 +26,11 @@ function Find-SpaceEngineers2 {
     return $null
 }
 
+function Test-SteamVRIsActiveRuntime {
+    $runtime = (Get-ItemProperty 'HKLM:\SOFTWARE\Khronos\OpenXR\1' -ErrorAction SilentlyContinue).ActiveRuntime
+    return [bool]($runtime -and $runtime -match 'steamvr')
+}
+
 function Test-SteamSignedIn {
     $user = (Get-ItemProperty 'HKCU:\Software\Valve\Steam\ActiveProcess' -ErrorAction SilentlyContinue).ActiveUser
     return [bool]$user
@@ -44,6 +49,14 @@ try {
     $deadline = (Get-Date).AddMinutes(2)
     while (-not (Test-SteamSignedIn) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
     if (-not (Test-SteamSignedIn)) { throw "Steam is not signed in. Sign in to Steam and try again." }
+
+    # The mod waits only briefly for the headset at start-up, so bring SteamVR up first if it is the VR runtime.
+    if ((Test-SteamVRIsActiveRuntime) -and -not (Get-Process vrcompositor -ErrorAction SilentlyContinue)) {
+        Start-Process 'steam://rungameid/250820'
+        $deadline = (Get-Date).AddSeconds(90)
+        while (-not (Get-Process vrcompositor -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 1 }
+        Start-Sleep -Seconds 5 # let it find the headset
+    }
 
     $start = New-Object System.Diagnostics.ProcessStartInfo $exe
     $start.WorkingDirectory = Split-Path $exe

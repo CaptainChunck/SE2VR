@@ -18,8 +18,8 @@ Install
    not touched.
 
 Play
-1. Start SteamVR with the headset connected. Steam must be running and signed in.
-2. Double-click "Space Engineers 2 VR" on your desktop.
+1. Connect the headset. Steam must be running and signed in.
+2. Double-click "Space Engineers 2 VR" on your desktop. It starts SteamVR first if needed.
    Alternative: paste the launch option into Steam > Space Engineers 2 > Properties > General > Launch Options and
    start the game from Steam. Then every start from Steam is in VR; remove the launch option to play normally.
 

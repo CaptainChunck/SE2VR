@@ -32,7 +32,10 @@ renders with DirectX 12, so a plugin can work directly with the renderer:
    change, because the canvas keeps the window's origin and pixel scale.
 5. **Mouse pointer.** The game's pointer is the Windows cursor, which only exists on the monitor. Whenever Windows
    shows it over the game window, the plugin draws its own pointer on the panel, at the position the game's UI uses.
-6. **Desktop window.** The window keeps showing the right eye as a mirror.
+6. **World markers.** GPS and antenna markers are projected with the panel's own frustum, so they sit over their
+   objects in the headset.
+7. **Desktop window.** The window keeps showing the right eye as a mirror. The plugin keeps the player's saved display
+   settings unchanged, so the VR window size never ends up in the game's options.
 
 The game's built-in temporal upscaler (FSR) is switched to FXAA while the headset is active, because one temporal
 history cannot serve two viewpoints.
@@ -42,7 +45,7 @@ history cannot serve two viewpoints.
 - Space Engineers 2 (tested against game version 2.4.0.95).
 - A PC VR headset with an OpenXR runtime set as active. For SteamVR: SteamVR Settings > OpenXR > "Set SteamVR as
   OpenXR runtime".
-- .NET SDK 9 or newer, to build.
+- To build from source only: .NET SDK 9 or newer.
 - A strong GPU. Rendering SE2 twice per frame at headset resolution is heavy. Lower `RenderScale` (see below) and the
   game's graphics preset until it is smooth.
 
@@ -51,7 +54,8 @@ history cannot serve two viewpoints.
 1. Download `SE2VR-v<version>.zip` from the repository's Releases page and extract it anywhere.
 2. Double-click `Install.cmd`. It copies the mod to `%LOCALAPPDATA%\SE2VR`, creates a **Space Engineers 2 VR** shortcut
    on the desktop and copies the Steam launch option to the clipboard. Nothing in the game folder is changed.
-3. Start SteamVR with the headset connected, then double-click **Space Engineers 2 VR**. Steam must be running.
+3. Connect the headset and double-click **Space Engineers 2 VR**. Steam must be running; the shortcut starts SteamVR
+   first if it is your OpenXR runtime and not running yet.
 
 The shortcut starts the game directly with the plugin (it tells Steamworks the app id through the `SteamAppId`
 environment variable), so Steam's own Play button keeps starting the normal game. If you prefer starting from Steam,
@@ -105,7 +109,7 @@ To play without VR, remove the launch option, or set `"Enabled": false` in `SE2V
 | `SystemWaitSeconds` | `15` | How long to wait at start-up for the headset to appear. |
 | `VerboseLogging` | `false` | Writes more detail to the log. |
 
-Settings are read once, at game start.
+Settings are read at game start; the panel size keys change `UiWidthDegrees` while playing.
 
 ## Using it
 
@@ -121,13 +125,29 @@ Settings are read once, at game start.
 - **Log:** everything the plugin does is written to `%LOCALAPPDATA%\SE2VR\SE2VR.log`, and mirrored into the game log
   with an `[SE2VR]` prefix.
 
+## Performance
+
+The scene is drawn twice per frame, so expect roughly half the frame rate you get on the monitor at the same
+resolution. Measured on an RTX 3050 with a VIVE Pro 2 (90 Hz), RenderScale 0.75 (1668x1668 per eye), Medium preset:
+
+| World | Frame rate | GPU time per frame (both eyes) |
+|---|---|---|
+| Empty World | ~89 fps | ~9 ms |
+| Creative, Concordia Research Facility (large grids) | ~45 fps (SteamVR reprojects to 90 Hz) | ~21 ms |
+
+To make it smoother, lower `RenderScale` (0.6 draws about a third fewer pixels than 0.75), the game's graphics preset,
+or SteamVR's per-application resolution. The log writes a `Perf:` line every 10 seconds with the frame rate and
+timings.
+
 ## Known limitations
 
 - No motion controllers or VR interaction yet.
 - The HUD panel floats at a fixed distance. When you focus on something much nearer or farther, the crosshair can
   look doubled.
-- Markers the game projects from the 3D world onto the screen (for example on the map) are drawn on the flat panel
-  and do not line up with the 3D view.
+- World markers (GPS, antennas) are placed on the panel where their objects appear from the seated head position, so
+  they drift a little when you lean far to the side. On a curved panel they are exact only near its center. The
+  colonization map screen has not been checked in VR yet.
+- Cockpits and ship flight have not been checked in VR yet.
 - Screen-space effects (SSR, ambient occlusion, clouds) keep one history shared by both eyes. They may shimmer
   slightly.
 - Water splash particles still simulate once per eye.
