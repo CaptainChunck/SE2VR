@@ -46,9 +46,11 @@ public sealed class VRPlugin : IPlugin, IDisposable
         }
         Patch(typeof(ParticlePatches));
         Patch(typeof(DisplayOptionsPatch));
+        Patch(typeof(KeepSavedDisplayOptionsPatch));
         Patch(typeof(SlugAlphaPatch));
         Patch(typeof(UiCanvasPatch.Initialize));
         Patch(typeof(UiCanvasPatch.DisplaySettingsChanged));
+        Patch(typeof(HudProjectionPatch));
         host.OnBeforeEngineInstantiated += OnBeforeEngineInstantiated;
     }
 

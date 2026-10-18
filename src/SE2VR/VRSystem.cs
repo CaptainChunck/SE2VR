@@ -20,6 +20,9 @@ internal static class VRSystem
     /// <summary>True once the game window was forced to the per-eye resolution; display-mode changes are then ignored.</summary>
     public static bool IsResolutionLocked { get; private set; }
 
+    /// <summary>The game was told to use the per-eye window size (forced display options).</summary>
+    public static bool IsDisplayForced { get; private set; }
+
     public static XrRuntime? Xr { get; private set; }
 
     /// <summary>Set when anything goes wrong; the game then renders normally to the monitor.</summary>
@@ -73,6 +76,7 @@ internal static class VRSystem
         // The headset paces the frame rate (xrWaitFrame); waiting for the monitor's v-sync as well would halve it.
         display.VSync = VSyncMode.None;
         display.EnableStretching = true;
+        IsDisplayForced = true;
         IsResolutionLocked = config.LockResolution;
         Log.Info($"Forcing a {width}x{height} window per eye (render scale {config.RenderScale:0.##}), v-sync off.");
     }

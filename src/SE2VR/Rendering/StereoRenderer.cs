@@ -191,6 +191,11 @@ internal static unsafe class StereoRenderer
             {
                 stereo = menuPanel = false;
             }
+            else
+            {
+                VrCursor.CheckWindowPlacement(new Vector2I(_eyeSwapchains[0]!.Width, _eyeSwapchains[0]!.Height),
+                                              new Vector2I(_uiSwapchain!.Width, _uiSwapchain.Height));
+            }
         }
 
         uint layerCount = 0;
@@ -527,7 +532,6 @@ internal static unsafe class StereoRenderer
             Vector2I canvas = UiCanvas.Fit(new Vector2I(width, height));
             _uiSwapchain = new XrImageSwapchain(xr, "UI", canvas.X, canvas.Y);
             EnsureLayerMemory();
-            VrCursor.LogWindowPlacement(new Vector2I(width, height), canvas);
             return true;
         }
         catch (Exception e)

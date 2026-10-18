@@ -115,39 +115,55 @@ internal static unsafe class VrCursor
         }
     }
 
+    private static int _placementChecks;
+
     /// <summary>
-    /// Where the game window's client area is relative to its monitor. The mouse can only reach the part of the UI
-    /// canvas that is on screen, so a window hanging off the screen edge is worth a warning.
+    /// The mouse can only reach the part of the UI canvas that is on a monitor. The per-eye window is often taller than
+    /// the screen; if part of the canvas (the top of the window) is off screen, the window is moved once so all of it is
+    /// reachable. Call every frame; it does its work once, as soon as the game window exists.
     /// </summary>
-    public static void LogWindowPlacement(Vector2I window, Vector2I canvas)
+    public static void CheckWindowPlacement(Vector2I window, Vector2I canvas)
     {
+        if (_placementChecks < 0 || ++_placementChecks % 30 != 1)
+        {
+            return;
+        }
+        if (_placementChecks > 30 * 60)
+        {
+            _placementChecks = -1; // no window after a minute of frames: give up quietly
+            return;
+        }
         nint handle = System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle;
         if (handle == 0 || !GetClientRect(handle, out Rect client) || client.Right <= 0 || client.Bottom <= 0)
         {
             return;
         }
-        Point topLeft = default;
-        ClientToScreen(handle, ref topLeft);
-        MonitorInfo monitor = new() { Size = sizeof(MonitorInfo) };
-        if (!GetMonitorInfo(MonitorFromWindow(handle, 2 /* nearest */), ref monitor))
+        _placementChecks = -1;
+        Point origin = default;
+        ClientToScreen(handle, ref origin);
+        // The canvas is the top of the client area, scaled like the render resolution.
+        int width = client.Right, height = (int)MathF.Ceiling(client.Bottom * (float)canvas.Y / window.Y);
+        string where = $"Game window client area {client.Right}x{client.Bottom} at ({origin.X}, {origin.Y}); UI canvas {width}x{height} on screen.";
+        if (OnSomeMonitor(origin.X, origin.Y) && OnSomeMonitor(origin.X + width - 1, origin.Y) &&
+            OnSomeMonitor(origin.X, origin.Y + height - 1) && OnSomeMonitor(origin.X + width - 1, origin.Y + height - 1))
         {
+            Log.Info(where);
             return;
         }
-        // The UI canvas occupies the top of the client area, scaled like the render resolution.
-        int canvasBottom = topLeft.Y + (int)MathF.Ceiling(client.Bottom * (float)canvas.Y / window.Y);
-        Rect screen = monitor.Monitor;
-        bool reachable = topLeft.X >= screen.Left && topLeft.Y >= screen.Top && topLeft.X + client.Right <= screen.Right && canvasBottom <= screen.Bottom;
-        string message = $"Game window client area {client.Right}x{client.Bottom} at ({topLeft.X}, {topLeft.Y}); monitor ({screen.Left}, {screen.Top})-({screen.Right}, {screen.Bottom}); " +
-                         $"UI canvas on screen rows {topLeft.Y}-{canvasBottom}.";
-        if (reachable)
+        // Put the client area's top-left corner at the top-left of the primary monitor's work area.
+        MonitorInfo monitor = new() { Size = sizeof(MonitorInfo) };
+        if (!GetMonitorInfo(MonitorFromPoint(default, 1 /* primary */), ref monitor) || !GetWindowRect(handle, out Rect frame))
         {
-            Log.Info(message);
+            Log.Warn(where + " Part of the UI is off screen, where the mouse cannot reach it; move the game window onto a monitor.");
+            return;
         }
-        else
-        {
-            Log.Warn(message + " Part of the UI is off screen, where the mouse cannot reach it; move the game window fully onto the monitor.");
-        }
+        int x = monitor.Work.Left - (origin.X - frame.Left), y = monitor.Work.Top - (origin.Y - frame.Top);
+        // Asynchronous: the window belongs to another thread, which may be waiting for this one.
+        SetWindowPos(handle, 0, x, y, 0, 0, SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpAsyncWindowPos);
+        Log.Warn(where + $" Part of it was off screen, where the mouse cannot reach it; moved the window to ({x}, {y}).");
     }
+
+    private static bool OnSomeMonitor(int x, int y) => MonitorFromPoint(new Point { X = x, Y = y }, 0 /* null if none */) != 0;
 
     /// <summary>Releases the image after its one-time upload; nothing to do afterwards.</summary>
     public static void ReleaseImage() => _swapchain?.Release();
@@ -312,7 +328,15 @@ internal static unsafe class VrCursor
     }
 
     [DllImport("user32.dll")]
-    private static extern nint MonitorFromWindow(nint window, int flags);
+    private static extern nint MonitorFromPoint(Point point, int flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(nint window, out Rect rect);
+
+    private const uint SwpNoSize = 0x1, SwpNoZOrder = 0x4, SwpNoActivate = 0x10, SwpAsyncWindowPos = 0x4000;
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(nint window, nint insertAfter, int x, int y, int width, int height, uint flags);
 
     [DllImport("user32.dll")]
     private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);

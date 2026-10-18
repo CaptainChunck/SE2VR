@@ -12,6 +12,9 @@ internal static class UiCanvas
 {
     public static bool Enabled => VRSystem.Xr != null && !VRSystem.IsDisabled;
 
+    /// <summary>The canvas size the game's UI was last given (zero until the UI started).</summary>
+    public static Vector2I Current { get; set; }
+
     /// <summary>
     /// UI canvas for a window/render resolution: the full width at the configured aspect ratio, never taller than the
     /// window. Keeping the width and the top-left origin keeps the game's mouse-to-UI mapping valid unchanged.

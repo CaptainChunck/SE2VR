@@ -6,3 +6,4 @@ build/
 *.log
 # Decompiled game code must never be committed.
 decomp/
+dist/

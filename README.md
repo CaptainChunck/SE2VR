@@ -22,10 +22,17 @@ renders with DirectX 12, so a plugin can work directly with the renderer:
      pose applied on top, its own asymmetric projection, and its own temporal history.
    - Each eye's result is copied into an OpenXR swapchain image. Those images are wrapped in the engine's own
      `BackBuffer` type, so the renderer's resource-state tracking handles the barriers.
-   - The game UI (menus, HUD, cursor) is rendered once into a separate image and shown as a **floating panel** (an
-     OpenXR quad layer). It is not burned into both eyes.
+   - The game UI (menus and HUD) is rendered once into a separate image and shown as a **floating panel** in front
+     of you (an OpenXR quad layer, or a curved cylinder layer where the runtime supports it). It is not burned into
+     both eyes.
    - GPU particles are simulated once per frame. The right eye reuses the left eye's simulation.
-4. **Desktop window.** The window keeps showing the right eye as a mirror.
+4. **UI layout.** The VR window is nearly square, like the eye images, which would stretch the game's UI over a tall
+   1920x1920 canvas. The plugin tells the UI the screen is 16:9 instead (the top part of the window), so menus and the
+   HUD keep the layout they were designed for and the panel can be made wide enough to read. Mouse input needs no
+   change, because the canvas keeps the window's origin and pixel scale.
+5. **Mouse pointer.** The game's pointer is the Windows cursor, which only exists on the monitor. Whenever Windows
+   shows it over the game window, the plugin draws its own pointer on the panel, at the position the game's UI uses.
+6. **Desktop window.** The window keeps showing the right eye as a mirror.
 
 The game's built-in temporal upscaler (FSR) is switched to FXAA while the headset is active, because one temporal
 history cannot serve two viewpoints.
@@ -39,13 +46,29 @@ history cannot serve two viewpoints.
 - A strong GPU. Rendering SE2 twice per frame at headset resolution is heavy. Lower `RenderScale` (see below) and the
   game's graphics preset until it is smooth.
 
-## Build and install
+## Install (players)
+
+1. Download `SE2VR-v<version>.zip` from the repository's Releases page and extract it anywhere.
+2. Double-click `Install.cmd`. It copies the mod to `%LOCALAPPDATA%\SE2VR`, creates a **Space Engineers 2 VR** shortcut
+   on the desktop and copies the Steam launch option to the clipboard. Nothing in the game folder is changed.
+3. Start SteamVR with the headset connected, then double-click **Space Engineers 2 VR**. Steam must be running.
+
+The shortcut starts the game directly with the plugin (it tells Steamworks the app id through the `SteamAppId`
+environment variable), so Steam's own Play button keeps starting the normal game. If you prefer starting from Steam,
+paste the launch option from the clipboard into Steam > Space Engineers 2 > Properties > General > Launch Options.
+`Uninstall.cmd` removes the mod again. No .NET SDK is needed; the game brings the .NET runtime.
+
+The plugin never saves the VR window size into your game settings: full screen, resolution and v-sync stay as they
+were for playing without VR.
+
+## Build from source
 
 ```powershell
-.\install.ps1
+.\install.ps1            # build and install to %LOCALAPPDATA%\SE2VR
+.\tools\Package.ps1      # build the player zip in dist\
 ```
 
-This builds the plugin and copies it to `%LOCALAPPDATA%\SE2VR`. It then prints the Steam launch option to use:
+`install.ps1` builds the plugin and copies it to `%LOCALAPPDATA%\SE2VR`. It then prints the Steam launch option to use:
 
 ```
 -plugins:C:\Users\<you>\AppData\Local\SE2VR\SE2VR.dll
@@ -68,8 +91,11 @@ To play without VR, remove the launch option, or set `"Enabled": false` in `SE2V
 | `Enabled` | `true` | Master switch. |
 | `RenderScale` | `0.75` | Per-eye resolution relative to the runtime's recommendation. SteamVR's per-app resolution slider applies on top of this. |
 | `WorldScale` | `1.0` | Scales head movement and eye separation. Values above 1 make the world feel smaller. |
-| `UiDistance` | `1.6` | Distance of the menu/HUD panel, in meters. |
-| `UiWidth` | `1.6` | Width of the menu/HUD panel, in meters. |
+| `UiDistance` | `1.6` | Distance of the menu/HUD panel from your seated head position, in meters. |
+| `UiWidthDegrees` | `70` | How much of your view the panel covers horizontally. Raise it if text is too small to read; lower it if you have to turn your head to see the edges. |
+| `UiCurved` | `true` | Curves the panel around you so every part is the same distance away. Needs an OpenXR runtime with cylinder layers (`XR_KHR_composition_layer_cylinder`). SteamVR 2.x does not offer them, so it shows a flat panel; the log says which one is used. |
+| `UiAspectRatio` | `1.7778` | Shape of the UI canvas. The game's UI is designed for 16:9. |
+| `ShowCursor` | `true` | Shows the mouse pointer on the panel. |
 | `ForceWindowedResolution` | `true` | Runs the game in a window sized to one eye, so every rendered pixel reaches the headset. |
 | `LockResolution` | `true` | Ignores display-mode changes from the game's options menu while VR is active. They are still saved for non-VR play. |
 | `RecenterKey` | `Home` | Makes your current head position and heading the new "forward". Accepts names like `Home`, `F8` or `Ctrl+R`. Empty disables it. |
@@ -88,12 +114,19 @@ Settings are read once, at game start.
   what the headset receives into `captures\`.
 - **Steering:** the mouse or gamepad still turns the character and aims tools. The headset adds free head movement on
   top. The crosshair stays in the center of the floating HUD panel.
+- **Menus:** use the mouse as usual; its pointer is drawn on the panel. Keep the game window focused on the desktop.
+  The game window is taller than most monitors (it has the headset's per-eye resolution). If the top part of it, where
+  the UI is, hangs off the screen, the plugin moves the window once so the mouse can reach the whole UI.
 - **Log:** everything the plugin does is written to `%LOCALAPPDATA%\SE2VR\SE2VR.log`, and mirrored into the game log
   with an `[SE2VR]` prefix.
 
 ## Known limitations
 
 - No motion controllers or VR interaction yet.
+- The HUD panel floats at a fixed distance. When you focus on something much nearer or farther, the crosshair can
+  look doubled.
+- Markers the game projects from the 3D world onto the screen (for example on the map) are drawn on the flat panel
+  and do not line up with the 3D view.
 - Screen-space effects (SSR, ambient occlusion, clouds) keep one history shared by both eyes. They may shimmer
   slightly.
 - Water splash particles still simulate once per eye.
@@ -106,6 +139,26 @@ Settings are read once, at game start.
 [JakariaMods/SE2VR](https://github.com/JakariaMods/SE2VR) is an unofficial OpenVR plugin by a Keen developer. It
 alternates eyes between frames by default. This project is an independent OpenXR implementation and shares no code
 with it.
+
+## Automated tests
+
+The scripts in `tools\` drive a real game session and save what the headset receives, so changes can be checked
+without wearing the headset:
+
+```powershell
+.\tools\Run-UiTour.ps1             # loads the built-in Empty World and opens every main in-game screen
+.\tools\Run-UiTour.ps1 -World CRF  # the same in the Creative world (Concordia Research Facility)
+.\tools\Run-MenuTour.ps1           # main menu: settings tabs, new game, load, workshop, credits
+```
+
+Each run writes the eye images, the UI panel and a simulated headset view per eye (with the panel and pointer
+composited using the real eye poses and fields of view), plus a report with plugin errors, game assertions and frame
+timing, to `%LOCALAPPDATA%\SE2VR\testruns\<timestamp>`.
+
+They never touch your own saves or the game installation. The game runs with `-appData` pointing at an isolated
+profile (`%LOCALAPPDATA%\SE2VR\testprofile`), and it is started directly with the `SteamAppId` environment variable
+instead of a `steam_appid.txt` file. SteamVR must be running. The headset can stay on the desk, because test mode
+renders anyway and simulates a seated, straight-ahead head pose.
 
 ## Development notes
 

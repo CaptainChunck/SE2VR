@@ -10,7 +10,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>SE2VR</AssemblyName>
     <RootNamespace>SE2VR</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <!-- Plugin: copy NuGet dependencies (0Harmony.dll) next to the output, but not the game's own assemblies. -->
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
@@ -32,6 +32,7 @@
     <Reference Include="VRage.Render" HintPath="$(SE2GameDir)\VRage.Render.dll" Private="false" />
     <Reference Include="VRage.Render12" HintPath="$(SE2GameDir)\VRage.Render12.dll" Private="false" />
     <Reference Include="VRage.UI" HintPath="$(SE2GameDir)\VRage.UI.dll" Private="false" />
+    <Reference Include="Game2.Client" HintPath="$(SE2GameDir)\Game2.Client.dll" Private="false" />
     <Reference Include="Vortice.Direct3D12" HintPath="$(SE2GameDir)\Vortice.Direct3D12.dll" Private="false" />
     <Reference Include="Vortice.DXGI" HintPath="$(SE2GameDir)\Vortice.DXGI.dll" Private="false" />
     <Reference Include="Vortice.DirectX" HintPath="$(SE2GameDir)\Vortice.DirectX.dll" Private="false" />
@@ -42,8 +43,10 @@
 
   <!-- The renderer is almost entirely internal; publicize it so the plugin can call it directly. -->
   <ItemGroup>
+    <Publicize Include="VRage.Render" IncludeCompilerGeneratedMembers="false" />
     <Publicize Include="VRage.Render12" IncludeCompilerGeneratedMembers="false" />
     <Publicize Include="VRage.UI" IncludeCompilerGeneratedMembers="false" />
+    <Publicize Include="Game2.Client" IncludeCompilerGeneratedMembers="false" />
   </ItemGroup>
 
   <ItemGroup>

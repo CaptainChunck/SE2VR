@@ -30,6 +30,17 @@ if (-not (Wait-SE2Log -Pattern 'First stereo frame' -TimeoutSeconds 300)) {
     throw "The world did not reach stereo rendering; see $run\SE2VR.log"
 }
 Start-Sleep -Seconds 8 # let streaming settle and the spawn animation finish
+# Big worlds keep showing their loading screen (an opaque UI) for a while after the first 3D frame.
+$deadline = (Get-Date).AddSeconds(300)
+while ((Get-Date) -lt $deadline) {
+    $check = @(Invoke-SE2Capture -Label 'loading_check')
+    $line = @(Get-SE2PluginLog) -match 'Captured .*_loading_check_ui\.png' | Select-Object -Last 1
+    $check | Remove-Item -ErrorAction SilentlyContinue
+    if ($line -match 'alpha: ([\d.]+)% transparent' -and [double]$Matches[1] -gt 50) { break }
+    Write-Host "Still loading..."
+    Start-Sleep -Seconds 5
+}
+Start-Sleep -Seconds 3
 
 $resolution = Get-SE2Resolution
 Write-Host "Render $($resolution.Width)x$($resolution.Height), UI canvas $($resolution.CanvasWidth)x$($resolution.CanvasHeight)"
@@ -67,7 +78,7 @@ foreach ($step in $steps) {
     if ($step.Hold) { Set-SE2KeyState $step.Hold -Down; Start-Sleep -Milliseconds 1500 }
     $files = @(Invoke-SE2Capture -Label $step.Name)
     if ($step.Hold) { Set-SE2KeyState $step.Hold; Start-Sleep -Milliseconds 800 }
-    foreach ($f in $files) { Copy-Item $f $run }
+    foreach ($f in $files) { Move-Item $f $run -Force }
     $log = @(Get-SE2PluginLog)
     $uiLine = $log -match "Captured .*_$($step.Name)_(ui|menu)\.png" | Select-Object -Last 1
     $alpha = if ($uiLine -match 'alpha: (.*)\)$') { $Matches[1] } else { 'no UI image' }

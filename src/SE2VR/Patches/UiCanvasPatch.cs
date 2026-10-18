@@ -17,18 +17,18 @@ namespace SE2VR.Patches;
 /// panel can be made wide enough to read. Mouse input needs no change: the canvas starts at the window's top-left
 /// corner and keeps its pixel scale.
 /// <para>
-/// The UI's display information keeps its own copy of the display settings. It is created during
+/// The UI engine and its display information keep their own copies of the display settings. They are created during
 /// <c>AvaloniaApp.Initialize</c> (from <c>UIEngineComponent.RenderDisplaySettings</c>) and updated through
 /// <c>UIEngineComponent.OnDisplaySettingsChanged</c>. The game's assemblies are precompiled (ReadyToRun), so the small
 /// methods in between may be inlined; these two entry points are large or called through a delegate and can be patched
-/// reliably.
+/// reliably. Screen positions the game projects from the 3D world use the same canvas (see <see cref="HudProjectionPatch"/>).
 /// </para>
 /// </summary>
 internal static class UiCanvasPatch
 {
     private static Vector2I _lastLogged;
 
-    /// <summary>The display information is created from the settings field during initialization: lend it the canvas size.</summary>
+    /// <summary>The display information is created from the settings field during initialization.</summary>
     [HarmonyPatch]
     internal static class Initialize
     {
@@ -40,40 +40,26 @@ internal static class UiCanvasPatch
                 .FirstOrDefault(m => m.Name == "Initialize" && m.GetParameters().Any(p => p.ParameterType == typeof(UIEngineComponent)))
             ?? throw new MissingMethodException("AvaloniaApp", "Initialize(..., UIEngineComponent, ...)");
 
-        private static void Prefix(UIEngineComponent engineUI, out Vector2I __state)
+        private static void Prefix(UIEngineComponent engineUI)
         {
-            __state = engineUI.RenderDisplaySettings.Resolution;
-            engineUI.RenderDisplaySettings.Resolution = Fit(__state);
-        }
-
-        // Restores the real resolution, which the rest of the UI (world-to-screen mapping) expects; runs even on exceptions.
-        private static void Finalizer(UIEngineComponent engineUI, Vector2I __state)
-        {
-            engineUI.RenderDisplaySettings.Resolution = __state;
+            engineUI.RenderDisplaySettings.Resolution = Fit(engineUI.RenderDisplaySettings.Resolution);
         }
     }
 
-    /// <summary>Later display changes: the UI keeps the real settings, its layout gets the canvas.</summary>
+    /// <summary>Later display changes.</summary>
     [HarmonyPatch(typeof(UIEngineComponent), nameof(UIEngineComponent.OnDisplaySettingsChanged))]
     internal static class DisplaySettingsChanged
     {
-        private static bool Prefix(UIEngineComponent __instance, RenderDisplaySettings settings)
+        private static void Prefix(ref RenderDisplaySettings settings)
         {
-            if (!UiCanvas.Enabled)
-            {
-                return true;
-            }
-            __instance.RenderDisplaySettings = settings;
-            RenderDisplaySettings canvas = settings;
-            canvas.Resolution = Fit(settings.Resolution);
-            __instance.DisplayInformation?.UpdateDisplaySettings(canvas);
-            return false;
+            settings.Resolution = Fit(settings.Resolution);
         }
     }
 
     private static Vector2I Fit(Vector2I resolution)
     {
         Vector2I canvas = UiCanvas.Fit(resolution);
+        UiCanvas.Current = canvas;
         if (canvas != resolution && canvas != _lastLogged)
         {
             _lastLogged = canvas;
